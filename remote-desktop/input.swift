@@ -24,6 +24,7 @@ while let line = readLine() {
                 chunk.withUnsafeBufferPointer { buffer in
                     for down in [true, false] {
                         let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
+                        event.flags = []
                         event.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress!)
                         event.post(tap: .cghidEventTap)
                     }
@@ -43,7 +44,9 @@ while let line = readLine() {
                 down.flags = flags
                 down.post(tap:.cghidEventTap)
                 usleep(25000)
-                CGEvent(keyboardEventSource:nil,virtualKey:key,keyDown:false)?.post(tap:.cghidEventTap)
+                let up = CGEvent(keyboardEventSource:nil,virtualKey:key,keyDown:false)!
+                up.flags = []
+                up.post(tap:.cghidEventTap)
             } else { event.post(tap: .cghidEventTap) }
         } else if type == "scroll" {
             let dx = max(-1000,min(1000,command["dx"] as? Int ?? 0))
