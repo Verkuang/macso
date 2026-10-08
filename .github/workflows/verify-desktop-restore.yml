@@ -1,0 +1,74 @@
+name: Verify encrypted desktop restore
+on:
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  save:
+    if: ${{ github.actor == github.repository_owner && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+      MACSO_STATE_HOME: ${{ runner.temp }}/source-home
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Prepare isolated source files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/state-python"
+          "$RUNNER_TEMP/state-python/bin/pip" install cryptography==50.0.2
+          echo "MACSO_STATE_PYTHON=$RUNNER_TEMP/state-python/bin/python" >> "$GITHUB_ENV"
+          npm install --prefix remote-desktop --ignore-scripts --no-audit --no-fund
+          mkdir -p "$MACSO_STATE_HOME/Desktop" "$MACSO_STATE_HOME/Documents"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          home=Path(os.environ["MACSO_STATE_HOME"])
+          (home/"Desktop/恢复验证.txt").write_text("上次桌面文件，自动恢复验证。",encoding="utf-8")
+          (home/"Documents/project.txt").write_text("project checkpoint")
+          (home/"Documents/.env").write_text("EXCLUDED_TEST_SECRET")
+          PY
+      - name: Upload authenticated encrypted file checkpoint
+        uses: actions/github-script@v8
+        with:
+          script: |
+            await require('./remote-desktop/state-store.cjs').run({github, context, core, mode: 'save'});
+  restore:
+    needs: save
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+      MACSO_STATE_HOME: ${{ runner.temp }}/new-home
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Prepare a different fresh machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$MACSO_STATE_HOME/Desktop/恢复验证.txt"
+          python3 -m venv "$RUNNER_TEMP/state-python"
+          "$RUNNER_TEMP/state-python/bin/pip" install cryptography==50.0.2
+          echo "MACSO_STATE_PYTHON=$RUNNER_TEMP/state-python/bin/python" >> "$GITHUB_ENV"
+          npm install --prefix remote-desktop --ignore-scripts --no-audit --no-fund
+      - name: Download decrypt and restore on new machine
+        uses: actions/github-script@v8
+        with:
+          script: |
+            await require('./remote-desktop/state-store.cjs').run({github, context, core, mode: 'restore', sourceRun: context.runId});
+      - name: Verify destination file contents and exclusions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          home=Path(os.environ["MACSO_STATE_HOME"])
+          assert (home/"Desktop/恢复验证.txt").read_text(encoding="utf-8")=="上次桌面文件，自动恢复验证。"
+          assert (home/"Documents/project.txt").read_text()=="project checkpoint"
+          assert not (home/"Documents/.env").exists()
+          print("PASS: encrypted GitHub upload -> different fresh machine -> download -> authenticated decrypt -> restored Chinese desktop file and document.")
+          PY
