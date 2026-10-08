@@ -10,6 +10,7 @@ import tarfile
 import tempfile
 import subprocess
 import sys
+import stat
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 MAGIC = b"MACSO_STATE_1\n"
@@ -33,11 +34,17 @@ def safe_name(name):
                 and p.name in {n + ".plist" for n in PREFS})))
 
 def files(home):
+    def walk_error(error):
+        raise error  # Never report a successful empty backup for an unreadable folder.
     for root in ROOTS:
         base = home / root
-        if base.is_symlink() or not base.is_dir():
+        try:
+            mode = base.lstat().st_mode
+        except FileNotFoundError:
             continue
-        for folder, dirs, names in os.walk(base, followlinks=False):
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            continue
+        for folder, dirs, names in os.walk(base, followlinks=False, onerror=walk_error):
             dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in {"node_modules", "__pycache__", "venv", "build", "dist"}
                              and not (Path(folder)/d).is_symlink())
             for name in sorted(names):
