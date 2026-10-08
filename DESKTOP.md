@@ -56,7 +56,7 @@ Tailscale 创建 GitHub OpenID Connect 信任：issuer 为 `https://token.action
 
 远端 Chrome 已打开 `https://remotedesktop.google.com/support`，用户已完成 Google 登录；官方 Chrome Remote Desktop 扩展也已安装。生成临时连接时出现 RemoteAssistanceHost 的辅助功能授权向导，开启权限需要远端 `runner` 系统账户的管理员密码。工作流只配置了网页登录密码，没有设置该系统账户密码，当前尚未通过此授权步骤，也未验证 Google 实际桌面画面、输入与持续连接；尚不能宣称 Google 连接更稳定。官方临时支持代码仅可用一次，共享超过 30 分钟需再次确认。登录密码或验证码不应发到聊天或提交到仓库。
 
-本次只安装到这场临时 Mac；尚未增加下次启动自动安装步骤，也未保存 Google 主机绑定或 PIN。临时机器到期仍会销毁，安装其他远程桌面不会延长会话。
+当前工作流已增加 Google Chrome 和 Google 官方远程桌面主机的自动安装步骤；运行 37838275086 使用该版本并选择 120 分钟，会在首次网页登录后开始计时。账号登录、浏览器扩展和 macOS 系统权限仍须在新桌面完成，尚未保存 Google 主机绑定或 PIN。运行中的会话没有在线续期接口；新运行是新机器，旧机器的登录与文件不会自动迁移。临时机器到期仍会销毁，安装其他远程桌面不会延长会话。
 
 ## 其他入口
 
