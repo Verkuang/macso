@@ -7,7 +7,7 @@ on:
         type: choice
         default: '60'
         options: ['15', '30', '60', '120']
-permissions: {contents: read, id-token: write}
+permissions: {contents: read, actions: read, id-token: write}
 concurrency:
   group: macos-web-desktop
   cancel-in-progress: false
@@ -37,6 +37,25 @@ jobs:
             sudo --preserve-env=MACOS_ACCOUNT_PASSWORD "$(command -v python3)" remote-desktop/provision_account.py
             echo "System administrator: desktop. Password: your MACOS_ACCOUNT_PASSWORD secret. Authentication verified. Each run creates a fresh home folder." >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Prepare encrypted file storage
+        id: state_setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/macso-state-python"
+          "$RUNNER_TEMP/macso-state-python/bin/pip" install cryptography==50.0.2
+          echo "MACSO_STATE_PYTHON=$RUNNER_TEMP/macso-state-python/bin/python" >> "$GITHUB_ENV"
+          npm install --prefix remote-desktop --ignore-scripts --no-audit --no-fund
+      - name: Restore last saved files before opening desktop
+        id: state_restore
+        uses: actions/github-script@v8
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+          MACOS_STATE_KEY: ${{ secrets.MACOS_STATE_KEY }}
+        with:
+          script: |
+            await require('./remote-desktop/state-store.cjs').run({github, context, core, mode: 'restore'});
       - name: Compile and check desktop permissions
         shell: bash
         run: |
@@ -190,13 +209,26 @@ jobs:
             echo "- End: use End session in the web page, or Cancel workflow"
             echo "- Final acceptance requires seeing the real screen and verifying an input action in the browser."
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Keep browser desktop available for project testing
-        shell: bash
-        run: |
-          desktop_pid="$(cat "$RUNNER_TEMP/web-desktop.pid")"
-          while kill -0 "$desktop_pid" 2>/dev/null; do
-            sleep 10
-          done
+      - name: Keep desktop available and checkpoint encrypted files
+        uses: actions/github-script@v8
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+          MACOS_STATE_KEY: ${{ secrets.MACOS_STATE_KEY }}
+        with:
+          script: |
+            await require('./remote-desktop/state-store.cjs').run({github, context, core, mode: 'keep'});
+      - name: Save final encrypted files
+        if: ${{ always() && steps.state_setup.outcome == 'success' && steps.state_restore.outcome == 'success' }}
+        timeout-minutes: 3
+        uses: actions/github-script@v8
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+          MACOS_STATE_KEY: ${{ secrets.MACOS_STATE_KEY }}
+        with:
+          script: |
+            await require('./remote-desktop/state-store.cjs').run({github, context, core, mode: 'save'});
       - name: End private browser desktop
         if: always()
         shell: bash
