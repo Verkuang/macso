@@ -15,9 +15,9 @@ concurrency:
 
 jobs:
   environment:
-    name: Verify macOS and Xcode
+    name: macOS environment and project tests
     runs-on: macos-15
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -66,23 +66,8 @@ jobs:
             echo "**Project tests: SKIPPED.** Add project code and tests/macos.sh to run actual application tests." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  project-tests:
-    name: Run supplied project tests
-    needs: environment
-    runs-on: macos-15
-    timeout-minutes: 20
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Run project test entry point
+      - name: Run supplied project tests
         if: ${{ hashFiles('tests/macos.sh') != '' }}
+        timeout-minutes: 20
         shell: bash
         run: bash -euo pipefail tests/macos.sh
-      - name: Mark missing project tests
-        if: ${{ hashFiles('tests/macos.sh') == '' }}
-        shell: bash
-        run: |
-          echo "::notice::Project tests skipped because tests/macos.sh is missing."
-          echo "**Project tests: SKIPPED.** No project test entry point has been provided." >> "$GITHUB_STEP_SUMMARY"
