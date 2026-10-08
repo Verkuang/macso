@@ -1,0 +1,25 @@
+name: Clear stalled desktop startup
+on:
+  push:
+    paths: ['.github/workflows/clear-stalled-desktop.yml']
+permissions:
+  actions: write
+  contents: read
+jobs:
+  cleanup:
+    if: github.repository == 'Verkuang/macso' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Force-cancel only the stalled desktop run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          status="$(gh api repos/Verkuang/macso/actions/runs/37838275086 --jq '.status')"
+          if [ "$status" = completed ]; then
+            echo "Stalled run already ended." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh api --method POST repos/Verkuang/macso/actions/runs/37838275086/force-cancel
+          echo "Force cancellation requested for stalled run 37838275086." >> "$GITHUB_STEP_SUMMARY"
