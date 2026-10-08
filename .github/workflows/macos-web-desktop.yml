@@ -32,6 +32,45 @@ jobs:
           remote-desktop/input-helper --status > "$RUNNER_TEMP/web-desktop-permissions.json"
           cat "$RUNNER_TEMP/web-desktop-permissions.json"
           python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["capture"] and d["control"] else 1)' "$RUNNER_TEMP/web-desktop-permissions.json"
+      - name: Start authenticated private web desktop
+        timeout-minutes: 3
+        env:
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MACOS_PASSWORD"
+          nohup python3 -u remote-desktop/server.py > "$RUNNER_TEMP/web-desktop.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/web-desktop.pid"
+          python3 - <<'PY'
+          import json, os, time, urllib.request, urllib.error
+          from pathlib import Path
+          for attempt in range(45):
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:6080/health",timeout=2) as response:
+                      if json.load(response)["ready"]:
+                          break
+              except (OSError, ValueError):
+                  pass
+              time.sleep(1)
+          else:
+              print(Path(os.environ["RUNNER_TEMP"],"web-desktop.log").read_text())
+              raise SystemExit("Web desktop did not produce a real frame.")
+          try:
+              urllib.request.urlopen("http://127.0.0.1:6080/frame.jpg",timeout=5)
+          except urllib.error.HTTPError as error:
+              assert error.code == 401
+          else:
+              raise SystemExit("Unauthenticated screen access was incorrectly allowed.")
+          request=urllib.request.Request("http://127.0.0.1:6080/api/login",data=json.dumps({"password":os.environ["MACOS_PASSWORD"],"begin":False}).encode(),headers={"Content-Type":"application/json"})
+          with urllib.request.urlopen(request,timeout=5) as response:
+              cookie=response.headers["Set-Cookie"].split(";")[0]
+          request=urllib.request.Request("http://127.0.0.1:6080/api/status",headers={"Cookie":cookie})
+          with urllib.request.urlopen(request) as response:
+              state=json.load(response)
+          assert state["control"], "Mouse/keyboard control was not available."
+          print("Real screen frames, password login, and protected screen access verified.")
+          PY
       - name: Install official Google remote desktop for comparison
         shell: bash
         run: |
@@ -43,42 +82,6 @@ jobs:
           sudo installer -pkg "$RUNNER_TEMP/crd-installer/Chrome Remote Desktop Host.pkg" -target /
           hdiutil detach "$RUNNER_TEMP/crd-installer"
           echo "Google host installed. Account login and macOS permissions still require desktop setup." >> "$GITHUB_STEP_SUMMARY"
-      - name: Start authenticated private web desktop
-        env:
-          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$MACOS_PASSWORD"
-          nohup python3 remote-desktop/server.py > "$RUNNER_TEMP/web-desktop.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/web-desktop.pid"
-          python3 - <<'PY'
-          import json, os, time, urllib.request, urllib.error
-          for attempt in range(45):
-              try:
-                  with urllib.request.urlopen("http://127.0.0.1:6080/health",timeout=2) as response:
-                      if json.load(response)["ready"]:
-                          break
-              except (OSError, ValueError):
-                  pass
-              time.sleep(1)
-          else:
-              raise SystemExit("Web desktop did not produce a real frame.")
-          try:
-              urllib.request.urlopen("http://127.0.0.1:6080/frame.jpg")
-          except urllib.error.HTTPError as error:
-              assert error.code == 401
-          else:
-              raise SystemExit("Unauthenticated screen access was incorrectly allowed.")
-          request=urllib.request.Request("http://127.0.0.1:6080/api/login",data=json.dumps({"password":os.environ["MACOS_PASSWORD"],"begin":False}).encode(),headers={"Content-Type":"application/json"})
-          with urllib.request.urlopen(request) as response:
-              cookie=response.headers["Set-Cookie"].split(";")[0]
-          request=urllib.request.Request("http://127.0.0.1:6080/api/status",headers={"Cookie":cookie})
-          with urllib.request.urlopen(request) as response:
-              state=json.load(response)
-          assert state["control"], "Mouse/keyboard control was not available."
-          print("Real screen frames, password login, and protected screen access verified.")
-          PY
       - name: Connect private network (automatic when configured)
         env:
           TS_OIDC_CLIENT_ID: ${{ vars.TS_OIDC_CLIENT_ID }}
