@@ -34,6 +34,34 @@ jobs:
             echo "::error::Create the repository Actions secret MACOS_PASSWORD before starting this workflow."
             exit 1
           fi
+      - name: Start authenticated Apple Screen Sharing
+        env:
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo sysadminctl -addUser desktop -fullName "Temporary Project Desktop" -password "$MACOS_PASSWORD"
+          id desktop
+          kickstart=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
+          sudo "$kickstart" -activate -configure -access -on \
+            -allowAccessFor -specifiedUsers -users desktop -privs -all -restart -agent
+          sudo launchctl enable system/com.apple.screensharing
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
+          python3 - <<'PY'
+          import socket, time
+          for attempt in range(30):
+              try:
+                  with socket.create_connection(("127.0.0.1", 5900), timeout=2) as conn:
+                      header = conn.recv(12)
+                      if header.startswith(b"RFB "):
+                          print("Screen Sharing protocol available:", header.decode().strip())
+                          break
+              except OSError:
+                  pass
+              time.sleep(2)
+          else:
+              raise SystemExit("Screen Sharing protocol did not become available")
+          PY
       - name: Prepare encrypted device authorization
         shell: bash
         run: |
@@ -104,39 +132,16 @@ jobs:
           done
           echo "::error::Device approval timed out."
           exit 1
-      - name: Start authenticated Apple Screen Sharing
-        env:
-          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+      - name: Publish private desktop address
         shell: bash
         run: |
           set -euo pipefail
-          sudo dscl . -passwd /Users/runner "$MACOS_PASSWORD"
-          kickstart=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
-          sudo "$kickstart" -activate -configure -access -on \
-            -allowAccessFor -specifiedUsers -users runner -privs -all -restart -agent
-          sudo launchctl enable system/com.apple.screensharing
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
-          python3 - <<'PY'
-          import socket, time
-          for attempt in range(30):
-              try:
-                  with socket.create_connection(("127.0.0.1", 5900), timeout=2) as conn:
-                      header = conn.recv(12)
-                      if header.startswith(b"RFB "):
-                          print("Screen Sharing protocol available:", header.decode().strip())
-                          break
-              except OSError:
-                  pass
-              time.sleep(2)
-          else:
-              raise SystemExit("Screen Sharing protocol did not become available")
-          PY
           sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve --bg --tcp=5900 tcp://127.0.0.1:5900
           desktop_ip="$(sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" ip -4)"
           {
             echo "## Temporary macOS desktop connection"
             echo "- Address: vnc://$desktop_ip:5900"
-            echo "- User: runner"
+            echo "- User: desktop"
             echo "- Password: your MACOS_PASSWORD repository secret"
             echo "- Session length: $SESSION_MINUTES minutes"
             echo "- End early: Cancel workflow"
