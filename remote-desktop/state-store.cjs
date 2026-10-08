@@ -2,12 +2,9 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const {promisify} = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
-const {pathToFileURL} = require('node:url');
-const {createRequire} = require('node:module');
 
 exports.run = async function ({github, context, core, mode, sourceRun}) {
-  const sdkRequire = createRequire(path.join(process.env.GITHUB_WORKSPACE, 'remote-desktop/package.json'));
-  const {DefaultArtifactClient} = await import(pathToFileURL(sdkRequire.resolve('@actions/artifact')).href);
+  const {DefaultArtifactClient} = await import('@actions/artifact');
   const client = new DefaultArtifactClient();
   const folder = path.join(process.env.RUNNER_TEMP, 'macso-state');
   const encrypted = path.join(folder, 'state.enc');
