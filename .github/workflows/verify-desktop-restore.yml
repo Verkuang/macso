@@ -9,7 +9,6 @@ jobs:
     timeout-minutes: 8
     env:
       MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
-      MACSO_STATE_HOME: ${{ runner.temp }}/source-home
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
@@ -21,6 +20,8 @@ jobs:
           "$RUNNER_TEMP/state-python/bin/pip" install cryptography==50.0.2
           echo "MACSO_STATE_PYTHON=$RUNNER_TEMP/state-python/bin/python" >> "$GITHUB_ENV"
           npm install --prefix remote-desktop --ignore-scripts --no-audit --no-fund
+          export MACSO_STATE_HOME="$RUNNER_TEMP/source-home"
+          echo "MACSO_STATE_HOME=$MACSO_STATE_HOME" >> "$GITHUB_ENV"
           mkdir -p "$MACSO_STATE_HOME/Desktop" "$MACSO_STATE_HOME/Documents"
           python3 - <<'PY'
           import os
@@ -42,7 +43,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
-      MACSO_STATE_HOME: ${{ runner.temp }}/new-home
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
@@ -50,6 +50,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export MACSO_STATE_HOME="$RUNNER_TEMP/new-home"
+          echo "MACSO_STATE_HOME=$MACSO_STATE_HOME" >> "$GITHUB_ENV"
           test ! -e "$MACSO_STATE_HOME/Desktop/恢复验证.txt"
           python3 -m venv "$RUNNER_TEMP/state-python"
           "$RUNNER_TEMP/state-python/bin/pip" install cryptography==50.0.2
