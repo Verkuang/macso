@@ -1,8 +1,5 @@
 name: macOS Desktop Diagnostics
-on:
-  workflow_dispatch:
-  push:
-    paths: [".github/workflows/macos-desktop-check.yml"]
+on: {workflow_dispatch: {}}
 permissions: {contents: read}
 jobs:
   check:
@@ -30,7 +27,9 @@ jobs:
           sudo "$kickstart" -configure -users desktop -access -on -privs -all
           sudo "$kickstart" -configure -allowAccessFor -specifiedUsers
           sudo "$kickstart" -restart -agent
-          sudo dseditgroup -o create com.apple.access_screensharing
+          if ! sudo dscl . -read /Groups/com.apple.access_screensharing >/dev/null 2>&1; then
+            sudo dseditgroup -o create com.apple.access_screensharing
+          fi
           sudo dseditgroup -o edit -a desktop -t user com.apple.access_screensharing
           sudo launchctl enable system/com.apple.screensharing
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
