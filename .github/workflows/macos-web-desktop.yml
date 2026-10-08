@@ -24,6 +24,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Recreate saved test administrator
+        timeout-minutes: 3
+        env:
+          MACOS_ACCOUNT_PASSWORD: ${{ secrets.MACOS_ACCOUNT_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$MACOS_ACCOUNT_PASSWORD" ]; then
+            echo "Test administrator not configured: save MACOS_ACCOUNT_PASSWORD to recreate desktop on future runs." >> "$GITHUB_STEP_SUMMARY"
+          else
+            sudo --preserve-env=MACOS_ACCOUNT_PASSWORD "$(command -v python3)" remote-desktop/provision_account.py
+            echo "System administrator: desktop. Password: your MACOS_ACCOUNT_PASSWORD secret. Authentication verified. Each run creates a fresh home folder." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Compile and check desktop permissions
         shell: bash
         run: |
