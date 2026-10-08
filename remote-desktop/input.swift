@@ -29,7 +29,7 @@ while let line = readLine() {
                     }
                 }
             }
-        } else if type == "key" {
+        } else if type == "key" || type == "tap" {
             guard let code = command["code"] as? String, let key = codes[code] else { throw NSError(domain:"input",code:3) }
             let event = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: command["down"] as? Bool ?? false)!
             var flags: CGEventFlags = []
@@ -38,7 +38,13 @@ while let line = readLine() {
             if command["alt"] as? Bool == true { flags.insert(.maskAlternate) }
             if command["meta"] as? Bool == true { flags.insert(.maskCommand) }
             event.flags = flags
-            event.post(tap: .cghidEventTap)
+            if type == "tap" {
+                let down = CGEvent(keyboardEventSource:nil, virtualKey:key, keyDown:true)!
+                down.flags = flags
+                down.post(tap:.cghidEventTap)
+                usleep(25000)
+                CGEvent(keyboardEventSource:nil,virtualKey:key,keyDown:false)?.post(tap:.cghidEventTap)
+            } else { event.post(tap: .cghidEventTap) }
         } else if type == "scroll" {
             let dx = max(-1000,min(1000,command["dx"] as? Int ?? 0))
             let dy = max(-1000,min(1000,command["dy"] as? Int ?? 0))
@@ -51,6 +57,18 @@ while let line = readLine() {
             let right = command["button"] as? Int == 2
             let button: CGMouseButton = right ? .right : .left
             let action = command["action"] as? String ?? "move"
+            if action == "click" {
+                let clicks = Int64(max(1,min(2,command["clicks"] as? Int ?? 1)))
+                for kind in [right ? CGEventType.rightMouseDown : .leftMouseDown,right ? CGEventType.rightMouseUp : .leftMouseUp] {
+                    let click = CGEvent(mouseEventSource:nil,mouseType:kind,mouseCursorPosition:point,mouseButton:button)!
+                    click.setIntegerValueField(.mouseEventClickState,value:clicks)
+                    click.post(tap:.cghidEventTap)
+                    usleep(25000)
+                }
+                print("{\"ok\":true}")
+                fflush(stdout)
+                continue
+            }
             let kind: CGEventType = action == "down" ? (right ? .rightMouseDown : .leftMouseDown) : action == "up" ? (right ? .rightMouseUp : .leftMouseUp) : command["drag"] as? Bool == true ? (right ? .rightMouseDragged : .leftMouseDragged) : .mouseMoved
             let event = CGEvent(mouseEventSource:nil,mouseType:kind,mouseCursorPosition:point,mouseButton:button)!
             event.setIntegerValueField(.mouseEventClickState,value:Int64(max(1,min(2,command["clicks"] as? Int ?? 1))))
