@@ -5,15 +5,15 @@ on:
       minutes:
         description: Desktop session minutes
         type: choice
-        default: '30'
+        default: '60'
         options: ['15', '30', '60', '120']
-permissions: {contents: read}
+permissions: {contents: read, id-token: write}
 concurrency:
   group: macos-web-desktop
   cancel-in-progress: false
 jobs:
   desktop:
-    if: github.actor == github.repository_owner
+    if: github.actor == github.repository_owner && github.ref == 'refs/heads/main'
     name: Private browser-controlled macOS desktop
     runs-on: macos-15-intel
     timeout-minutes: 145
@@ -59,7 +59,7 @@ jobs:
               assert error.code == 401
           else:
               raise SystemExit("Unauthenticated screen access was incorrectly allowed.")
-          request=urllib.request.Request("http://127.0.0.1:6080/api/login",data=json.dumps({"password":os.environ["MACOS_PASSWORD"]}).encode(),headers={"Content-Type":"application/json"})
+          request=urllib.request.Request("http://127.0.0.1:6080/api/login",data=json.dumps({"password":os.environ["MACOS_PASSWORD"],"begin":False}).encode(),headers={"Content-Type":"application/json"})
           with urllib.request.urlopen(request) as response:
               cookie=response.headers["Set-Cookie"].split(";")[0]
           request=urllib.request.Request("http://127.0.0.1:6080/api/status",headers={"Cookie":cookie})
@@ -68,7 +68,10 @@ jobs:
           assert state["control"], "Mouse/keyboard control was not available."
           print("Real screen frames, password login, and protected screen access verified.")
           PY
-      - name: Prepare encrypted device authorization
+      - name: Connect private network (automatic when configured)
+        env:
+          TS_OIDC_CLIENT_ID: ${{ vars.TS_OIDC_CLIENT_ID }}
+          TS_OIDC_AUDIENCE: ${{ vars.TS_OIDC_AUDIENCE }}
         shell: bash
         run: |
           set -euo pipefail
@@ -83,6 +86,12 @@ jobs:
             sleep 1
           done
           test -S "$TS_SOCKET"
+          if [ -n "$TS_OIDC_CLIENT_ID" ]; then
+            test -n "$TS_OIDC_AUDIENCE" || { echo "::error::Missing TS_OIDC_AUDIENCE"; exit 1; }
+            python3 remote-desktop/connect_oidc.py
+            echo "Private network joined with the repository's approved identity." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           : > "$RUNNER_TEMP/macso-device-login.log"
           nohup sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" up \
             --hostname="macso-web-$GITHUB_RUN_ID" \
@@ -119,6 +128,7 @@ jobs:
           echo
           echo "Authorize this temporary device using the encrypted login artifact. It contains no plaintext password or login URL." >> "$GITHUB_STEP_SUMMARY"
       - name: Publish encrypted device authorization
+        if: vars.TS_OIDC_CLIENT_ID == ''
         uses: actions/upload-artifact@v4
         with:
           name: desktop-authorization-${{ github.run_id }}
@@ -126,6 +136,7 @@ jobs:
           retention-days: 1
           if-no-files-found: error
       - name: Wait for device approval
+        if: vars.TS_OIDC_CLIENT_ID == ''
         timeout-minutes: 10
         shell: bash
         run: |
@@ -148,7 +159,7 @@ jobs:
             echo "## Private macOS web desktop"
             echo "- Open: http://$desktop_ip:8080/"
             echo "- Password: your MACOS_PASSWORD repository secret"
-            echo "- Session: $SESSION_MINUTES minutes, counted from server startup"
+            echo "- Session: $SESSION_MINUTES minutes, counted from first browser password login (20-minute setup/login limit)"
             echo "- End: use End session in the web page, or Cancel workflow"
             echo "- Final acceptance requires seeing the real screen and verifying an input action in the browser."
           } >> "$GITHUB_STEP_SUMMARY"
