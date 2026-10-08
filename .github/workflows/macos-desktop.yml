@@ -42,6 +42,8 @@ jobs:
           set -euo pipefail
           sudo sysadminctl -addUser desktop -fullName "Temporary Project Desktop" -password "$MACOS_PASSWORD"
           id desktop
+          sudo dscl . -authonly desktop "$MACOS_PASSWORD"
+          echo "Desktop account accepts the saved password."
           kickstart=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
           sudo "$kickstart" -activate -configure -access -on \
             -allowAccessFor -specifiedUsers -users desktop -privs -all -restart -agent
