@@ -45,8 +45,12 @@ jobs:
           sudo dscl . -authonly desktop "$MACOS_PASSWORD"
           echo "Desktop account accepts the saved password."
           kickstart=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
-          sudo "$kickstart" -activate -configure -access -on \
-            -allowAccessFor -specifiedUsers -users desktop -privs -all -restart -agent
+          sudo "$kickstart" -activate
+          sudo "$kickstart" -configure -users desktop -access -on -privs -all
+          sudo "$kickstart" -configure -allowAccessFor -specifiedUsers
+          sudo "$kickstart" -restart -agent
+          sudo dseditgroup -o create com.apple.access_screensharing
+          sudo dseditgroup -o edit -a desktop -t user com.apple.access_screensharing
           sudo launchctl enable system/com.apple.screensharing
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
           python3 - <<'PY'
