@@ -23,7 +23,7 @@ jobs:
     runs-on: macos-15-intel
     timeout-minutes: 145
     env:
-      TS_SOCKET: ${{ runner.temp }}/macso-tailscale.sock
+      TS_SOCKET: /tmp/macso-tailscale.sock
       SESSION_MINUTES: ${{ inputs.minutes }}
     steps:
       - name: Require private desktop password
