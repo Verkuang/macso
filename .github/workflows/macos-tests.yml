@@ -1,0 +1,88 @@
+name: macOS Project Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  environment:
+    name: Verify macOS and Xcode
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify Apple toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          swift --version
+          {
+            echo "## macOS testing environment"
+            echo '~~~text'
+            sw_vers
+            uname -m
+            xcodebuild -version
+            swift --version
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Compile and run a Swift smoke check
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_dir="$(mktemp -d)"
+          trap 'rm -rf "$smoke_dir"' EXIT
+          cat > "$smoke_dir/main.swift" <<'SWIFT'
+          import Foundation
+          precondition(ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15)
+          print("Swift compile and execution on macOS: PASS")
+          SWIFT
+          xcrun swiftc "$smoke_dir/main.swift" -o "$smoke_dir/smoke"
+          "$smoke_dir/smoke"
+          echo "Swift compiler and execution smoke check: PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Report project test availability
+        shell: bash
+        run: |
+          if [ -f tests/macos.sh ]; then
+            echo "Project tests will run through tests/macos.sh." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice::No project code or tests/macos.sh has been supplied. Only the macOS environment was verified."
+            echo "**Project tests: SKIPPED.** Add project code and tests/macos.sh to run actual application tests." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  project-tests:
+    name: Run supplied project tests
+    needs: environment
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Run project test entry point
+        if: ${{ hashFiles('tests/macos.sh') != '' }}
+        shell: bash
+        run: bash -euo pipefail tests/macos.sh
+      - name: Mark missing project tests
+        if: ${{ hashFiles('tests/macos.sh') == '' }}
+        shell: bash
+        run: |
+          echo "::notice::Project tests skipped because tests/macos.sh is missing."
+          echo "**Project tests: SKIPPED.** No project test entry point has been provided." >> "$GITHUB_STEP_SUMMARY"
