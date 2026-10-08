@@ -54,7 +54,7 @@ Tailscale 创建 GitHub OpenID Connect 信任：issuer 为 `https://token.action
 
 2026-10-09 在运行 37830464143 的当前临时 Mac 中安装了 Google 官方 Chrome Remote Desktop Host。安装包来自 `https://dl.google.com/chrome-remote-desktop/chromeremotedesktop.dmg`；签名验证显示 Google LLC，苹果公证可信，安装程序返回 `The install was successful.`。已有网页桌面与 Screen Sharing 配置均保留，只关闭了反复断开的本机 VNC 测试连接窗口。
 
-远端 Chrome 已打开 `https://remotedesktop.google.com/support`。当前需要用户完成 Google 账号登录，之后才能生成一次性远程支持连接并验证实际画面、输入与持续连接；尚不能宣称 Google 连接更稳定。官方临时支持代码仅可用一次，共享超过 30 分钟需再次确认。登录密码或验证码不应发到聊天或提交到仓库。
+远端 Chrome 已打开 `https://remotedesktop.google.com/support`，用户已完成 Google 登录；官方 Chrome Remote Desktop 扩展也已安装。生成临时连接时出现 RemoteAssistanceHost 的辅助功能授权向导，开启权限需要远端 `runner` 系统账户的管理员密码。工作流只配置了网页登录密码，没有设置该系统账户密码，当前尚未通过此授权步骤，也未验证 Google 实际桌面画面、输入与持续连接；尚不能宣称 Google 连接更稳定。官方临时支持代码仅可用一次，共享超过 30 分钟需再次确认。登录密码或验证码不应发到聊天或提交到仓库。
 
 本次只安装到这场临时 Mac；尚未增加下次启动自动安装步骤，也未保存 Google 主机绑定或 PIN。临时机器到期仍会销毁，安装其他远程桌面不会延长会话。
 
