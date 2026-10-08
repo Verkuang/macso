@@ -1,0 +1,33 @@
+name: macOS Desktop Diagnostics
+on: {workflow_dispatch: {}}
+permissions: {contents: read}
+jobs:
+  check:
+    if: github.actor == github.repository_owner
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - name: Verify password and desktop access without network exposure
+        env:
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MACOS_PASSWORD"
+          sudo sysadminctl -addUser desktop -fullName "Temporary Project Desktop" -password "$MACOS_PASSWORD"
+          id desktop
+          if sudo dscl . -authonly desktop "$MACOS_PASSWORD"; then
+            echo "ACCOUNT_PASSWORD_ACCEPTED"
+          else
+            echo "::error::New desktop account rejected the saved password."
+            exit 1
+          fi
+          kickstart=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
+          sudo "$kickstart" -activate -configure -access -on -allowAccessFor -specifiedUsers -users desktop -privs -all -restart -agent
+          sudo launchctl enable system/com.apple.screensharing
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
+          dsmemberutil checkmembership -U desktop -G com.apple.access_screensharing || true
+          sudo dscl . -read /Users/desktop naprivs || true
+          sudo defaults read /Library/Preferences/com.apple.RemoteManagement || true
+          sudo launchctl print system/com.apple.screensharing | head -80 || true
+          sudo log show --last 2m --style compact --predicate 'process == "screensharingd"' | tail -80 || true
