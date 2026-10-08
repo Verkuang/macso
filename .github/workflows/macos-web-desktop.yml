@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   desktop:
-    if: github.actor == github.repository_owner && github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && github.actor == github.repository_owner && github.ref == 'refs/heads/main' }}
     name: Private browser-controlled macOS desktop
     runs-on: macos-15-intel
     timeout-minutes: 145
@@ -66,7 +66,7 @@ jobs:
           with urllib.request.urlopen(request,timeout=5) as response:
               cookie=response.headers["Set-Cookie"].split(";")[0]
           request=urllib.request.Request("http://127.0.0.1:6080/api/status",headers={"Cookie":cookie})
-          with urllib.request.urlopen(request) as response:
+          with urllib.request.urlopen(request,timeout=5) as response:
               state=json.load(response)
           assert state["control"], "Mouse/keyboard control was not available."
           print("Real screen frames, password login, and protected screen access verified.")
