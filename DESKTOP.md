@@ -4,9 +4,9 @@
 
 ## 打开网页桌面
 
-1. 在 Actions 选择 **macOS Web Desktop**，点击 **Run workflow**。默认 30 分钟，可选择 15、30、60、120 分钟。
+1. 在 Actions 选择 **macOS Web Desktop**，点击 **Run workflow**。默认 60 分钟，可选择 15、30、60、120 分钟。
 2. 使用仓库现有 Secret `MACOS_PASSWORD` 作为网页登录密码。不要把密码提交到代码或运行日志。
-3. 工作流生成加密的 Tailscale 设备授权附件。当前控制 Mac 保留配对解密私钥；解密后，在 Tailscale 页面登录并批准该次运行的临时设备。
+3. 若已配置专用 OIDC 信任，临时设备会自动接入。未配置时仍使用加密的设备授权附件，解密后手动批准本次临时设备。
 4. 授权完成后，在运行摘要打开 `http://临时设备地址:8080/`，输入保存的密码。控制设备需要连接同一 Tailscale 私人网络。
 5. 点击桌面画面即可操作鼠标和键盘。中文、网址或长文字可通过底部“发送文字”输入框发送到远端当前光标位置。
 
@@ -14,11 +14,19 @@
 
 ## 结束和下次启动
 
-- 计时从网页服务启动开始，包含网络授权等待时间；页面显示剩余分钟。
+- 使用时间从首次成功网页登录开始，健康检查不消耗使用时间，重复登录不能延长。启动后 20 分钟内无人登录则自动关闭；页面显示剩余分钟。
 - 用完点击网页的“结束会话”，或在 GitHub Actions 点击 **Cancel workflow**。
 - 关闭浏览器标签页或“退出查看”只会退出查看，不会结束临时机器。
 - 到时服务自动结束，并清理私人网络连接；每次运行都是新机器，文件不会长期保留。重要项目文件应提交到仓库或另行保存。
-- 下次需要时重新手动启动；地址及设备授权链接可能变化。
+- 下次需要时重新手动启动；地址可能变化。配置 OIDC 信任后不再逐次手动批准设备。
+
+## 自动接入配置（待管理员授权）
+
+Tailscale 创建 GitHub OpenID Connect 信任：issuer 为 `https://token.actions.githubusercontent.com`，subject 为 `repo:Verkuang@118420176/macso@1410681499:ref:refs/heads/main`；额外限制 `workflow_ref=Verkuang/macso/.github/workflows/macos-web-desktop.yml@refs/heads/main`、`actor=Verkuang`。只授予 auth_keys 读写，标签 `tag:macso-desktop` 的所有者为管理员。不授予策略、用户、DNS 或设备管理 API 权限。
+
+确认信任后，将公开 Client ID 与 Audience 保存为仓库 Actions Variables `TS_OIDC_CLIENT_ID`、`TS_OIDC_AUDIENCE`。每次运行使用 GitHub 短期身份，不保存长期密钥；注册预批准的临时设备，会话结束即注销。若自动登录失败，工作流会停止，不悄悄回退到人工授权。未配置变量时保留原手动入口。
+
+2026-10-09 计时行为的 HTTP 验证及 OIDC 参数模拟检查通过；自动授权尚未启用，需完成管理员授权并重新运行后现场验收。
 
 ## 已验证范围
 
