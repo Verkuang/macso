@@ -20,22 +20,35 @@ HTML = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta na
 <div id="notice" role="status"></div><section id="stage" aria-label="远程画面"><img id="screen" alt="macOS 实时桌面，点击后可使用键盘" tabindex="0" draggable="false"></section>
 <footer><label for="text">发送文字</label><input id="text" placeholder="可输入中文、网址或测试文字"><button id="sendText">发送到光标位置</button><span id="message" role="status">点击桌面即可操作鼠标和键盘</span></footer></main><script src="/app.js"></script></body></html>'''
 CSS = '''*{box-sizing:border-box}body{margin:0;background:#0b0f17;color:#ecf0f7;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,a,input{font:inherit}button,a{border:1px solid #344158;border-radius:8px;background:#1c2738;color:#e9f0ff;padding:9px 13px;cursor:pointer;text-decoration:none}button:hover,a:hover{background:#2b3c58}button:disabled{opacity:.4;cursor:default}input{border:1px solid #344158;background:#0c1525;border-radius:8px;color:white;padding:11px;outline:none}input:focus{border-color:#6f9aff}#login{min-height:100vh;display:grid;place-items:center}.card{width:min(410px,92vw);padding:35px;border:1px solid #29364a;border-radius:20px;background:#121d2d;box-shadow:0 30px 90px #0007}.icon{font-size:40px;color:#81aaff}h1{font-size:26px;margin:16px 0 10px}p{color:#a8b6ca;line-height:1.6}form{display:grid;gap:12px;margin-top:25px}form button{background:#4779e8;font-weight:600}#loginError{margin:0;color:#ffb1b1}header,nav,footer{display:flex;gap:10px;align-items:center;padding:12px 18px;border-bottom:1px solid #243045;flex-wrap:wrap}header strong{font-size:17px}#connection{font-size:12px;color:#a9caff}.spacer{flex:1}.danger{color:#ffb8b8;border-color:#744048}#remaining{color:#a8b6ca;font-size:12px}nav{padding-block:8px}#notice{color:#e7c67a;text-align:center;font-size:12px;padding:4px;min-height:25px}#stage{height:calc(100vh - 188px);min-height:200px;display:flex;align-items:center;justify-content:center;background:#030609;overflow:hidden}#screen{max-width:100%;max-height:100%;width:auto;height:auto;outline:none;user-select:none;cursor:crosshair;touch-action:none}#screen:focus{box-shadow:inset 0 0 0 2px #5788f9}footer{border-top:1px solid #243045;border-bottom:0}footer input{flex:1;min-width:180px}#message{font-size:12px;color:#a8b6ca}[hidden]{display:none!important}@media(max-width:700px){#stage{height:calc(100vh - 270px)}header,nav,footer{padding:8px}#message{width:100%}}'''
-JS = r'''const $=id=>document.getElementById(id);let csrf='',active=false,canControl=false,mouseButton=0,drag=false,lastMove=0,inputQueue=Promise.resolve(),lastClick=null;const pressed=new Set();
+JS = r'''const $=id=>document.getElementById(id);let csrf='',active=false,canControl=false,mouseButton=0,drag=false,inputQueue=Promise.resolve(),lastClick=null,pressStart=null,pendingMove=null,moveBusy=false;const pressed=new Set();
 async function api(path,data){const r=await fetch(path,{method:data===undefined?'GET':'POST',headers:data===undefined?{}:{'Content-Type':'application/json','X-Desktop-CSRF':csrf},body:data===undefined?undefined:JSON.stringify(data)});if(!r.ok){if(r.status===401){active=false;$('login').hidden=false;$('desktop').hidden=true;}throw new Error(r.status===401?'请重新登录':r.status===429?'操作过于频繁，请稍后重试':'操作失败，请检查连接');}return r.json();}
 function notify(text){$('message').textContent=text;}function input(data){if(!canControl)return Promise.resolve();inputQueue=inputQueue.then(async()=>{try{await api('/api/input',data);}catch(e){notify(e.message);}});return inputQueue;}
 async function start(){try{const s=await api('/api/status');csrf=s.csrf;canControl=s.control;active=true;$('login').hidden=true;$('desktop').hidden=false;$('notice').textContent=canControl?'':'当前只允许查看画面，系统尚未允许鼠标和键盘操作。';document.querySelectorAll('[data-app],[data-key],#sendText,#cmdspace').forEach(b=>b.disabled=!canControl);$('remaining').textContent='剩余 '+Math.max(0,Math.ceil(s.remaining/60))+' 分钟';refresh();}catch(e){$('loginError').textContent=e.message;}}
 function refresh(){if(active)$('screen').src='/frame.jpg?t='+Date.now();}$('screen').onload=()=>{$('connection').textContent='画面已连接'+(canControl?' · 可操作':' · 仅查看');if(active)setTimeout(refresh,650);};$('screen').onerror=()=>{$('connection').textContent='画面连接中断';if(active)setTimeout(refresh,1800);};
 $('loginForm').onsubmit=async e=>{e.preventDefault();$('loginError').textContent='';try{await api('/api/login',{password:$('password').value});$('password').value='';await start();}catch(e){$('loginError').textContent=e.message;}};
 function position(e){const r=$('screen').getBoundingClientRect();return{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};}
-$('screen').onpointerdown=e=>{if(!canControl)return;e.preventDefault();$('screen').focus();$('screen').setPointerCapture(e.pointerId);drag=true;mouseButton=e.button;const p=position(e),now=Date.now();const clicks=lastClick&&now-lastClick.time<450&&Math.abs(p.x-lastClick.x)<.005&&Math.abs(p.y-lastClick.y)<.005&&e.button===lastClick.button?2:1;lastClick={...p,time:now,button:e.button};input({type:'mouse',action:'down',button:e.button,clicks,...p});};
-$('screen').onpointerup=e=>{if(!canControl)return;e.preventDefault();drag=false;input({type:'mouse',action:'up',button:mouseButton,clicks:Math.min(2,e.detail||1),...position(e)});};
-$('screen').onpointermove=e=>{if(!canControl||Date.now()-lastMove<60)return;lastMove=Date.now();input({type:'mouse',action:'move',button:mouseButton,drag,...position(e)});};$('screen').oncontextmenu=e=>e.preventDefault();$('screen').addEventListener('wheel',e=>{if(!canControl)return;e.preventDefault();input({type:'scroll',dx:Math.round(e.deltaX),dy:Math.round(e.deltaY)});},{passive:false});
+function move(data){pendingMove=data;if(moveBusy)return;moveBusy=true;(async()=>{try{while(pendingMove){const latest=pendingMove;pendingMove=null;await input(latest);}}finally{moveBusy=false;}})();}
+$('screen').onpointerdown=e=>{if(!canControl)return;e.preventDefault();$('screen').focus();$('screen').setPointerCapture(e.pointerId);drag=false;mouseButton=e.button;const p=position(e),now=Date.now();const clicks=lastClick&&now-lastClick.time<450&&Math.abs(p.x-lastClick.x)<.005&&Math.abs(p.y-lastClick.y)<.005&&e.button===lastClick.button?2:1;lastClick={...p,time:now,button:e.button};pressStart={...p,clicks};};
+$('screen').onpointerup=e=>{if(!canControl||!pressStart)return;e.preventDefault();pendingMove=null;input({type:'mouse',action:drag?'up':'click',button:mouseButton,clicks:pressStart.clicks,...position(e)});drag=false;pressStart=null;};
+$('screen').onpointercancel=e=>{pendingMove=null;if(drag)input({type:'mouse',action:'up',button:mouseButton,...position(e)});drag=false;pressStart=null;};
+$('screen').onpointermove=e=>{if(!canControl)return;const p=position(e);if(pressStart&&!drag&&Math.hypot(p.x-pressStart.x,p.y-pressStart.y)>.003){input({type:'mouse',action:'down',button:mouseButton,...pressStart});drag=true;}move({type:'mouse',action:'move',button:mouseButton,drag,...p});};$('screen').oncontextmenu=e=>e.preventDefault();$('screen').addEventListener('wheel',e=>{if(!canControl)return;e.preventDefault();input({type:'scroll',dx:Math.round(e.deltaX),dy:Math.round(e.deltaY)});},{passive:false});
 function key(e,down){if(!canControl)return;e.preventDefault();if(down)pressed.add(e.code);else pressed.delete(e.code);input({type:'key',code:e.code,down,shift:e.shiftKey,ctrl:e.ctrlKey,alt:e.altKey,meta:e.metaKey});}$('screen').onkeydown=e=>key(e,true);$('screen').onkeyup=e=>key(e,false);$('screen').onblur=()=>{for(const code of pressed)input({type:'key',code,down:false});pressed.clear();};
-async function tap(code,meta=false){await input({type:'key',code,down:true,meta});await input({type:'key',code,down:false});$('screen').focus();}document.querySelectorAll('[data-key]').forEach(b=>b.onclick=()=>tap(b.dataset.key));$('cmdspace').onclick=()=>tap('Space',true);
+async function tap(code,meta=false){await input({type:'tap',code,meta});$('screen').focus();}document.querySelectorAll('[data-key]').forEach(b=>b.onclick=()=>tap(b.dataset.key));$('cmdspace').onclick=()=>tap('Space',true);
 document.querySelectorAll('[data-app]').forEach(b=>b.onclick=async()=>{try{await api('/api/launch',{app:b.dataset.app});notify('正在打开 '+b.textContent);$('screen').focus();}catch(e){notify(e.message);}});
 $('sendText').onclick=async()=>{if(!$('text').value)return;await input({type:'text',text:$('text').value});$('text').value='';$('screen').focus();};$('text').onkeydown=e=>{if(e.key==='Enter')$('sendText').click();};
 $('fullscreen').onclick=()=>{if(document.fullscreenElement)document.exitFullscreen();else $('desktop').requestFullscreen();};$('logout').onclick=async()=>{await api('/api/logout',{});active=false;$('desktop').hidden=true;$('login').hidden=false;};$('end').onclick=async()=>{if(!confirm('结束后这台临时 Mac 会关闭。确认结束会话？'))return;await api('/api/end',{});active=false;$('connection').textContent='会话已结束';canControl=false;};
 setInterval(async()=>{if(!active)return;try{const s=await api('/api/status');$('remaining').textContent='剩余 '+Math.max(0,Math.ceil(s.remaining/60))+' 分钟';}catch(e){notify(e.message);}},20000);start();'''
+
+def installed_app(app):
+    if app in {'Xcode', 'Simulator'}:
+        try:
+            developer = Path(subprocess.check_output(['/usr/bin/xcode-select', '-p'], text=True, timeout=5).strip())
+            target = developer.parent.parent if app == 'Xcode' else developer/'Applications'/'Simulator.app'
+            if target.suffix == '.app' and target.is_dir():
+                return str(target)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return app
 
 class Desktop:
     def __init__(self, helper, password, minutes):
@@ -162,7 +175,7 @@ class Handler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(self.headers.get('X-Desktop-CSRF',''),token):
             return self.reply(403, {'error':'invalid csrf token'})
         if route == '/api/input':
-            if data.get('type') not in {'mouse','key','text','scroll'}: return self.reply(400, {'error':'invalid input'})
+            if data.get('type') not in {'mouse','key','tap','text','scroll'}: return self.reply(400, {'error':'invalid input'})
             try:
                 ok = d.command(data)
             except (OSError,ValueError):
@@ -173,7 +186,7 @@ class Handler(BaseHTTPRequestHandler):
             if data.get('app') not in names: return self.reply(400, {'error':'unsupported app'})
             if not d.capabilities['control']: return self.reply(403, {'error':'control not permitted'})
             try:
-                subprocess.run(['/usr/bin/open','-a',data['app']], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+                subprocess.run(['/usr/bin/open','-a',installed_app(data['app'])], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
             except (OSError,subprocess.SubprocessError): return self.reply(503, {'error':'app unavailable'})
             return self.reply(200, {'ok':True})
         if route == '/api/logout':
@@ -190,9 +203,10 @@ def main():
     if not password: raise RuntimeError('MACOS_PASSWORD is required.')
     folder = Path(__file__).resolve().parent
     d = Desktop(folder/'input-helper',password,int(os.environ.get('SESSION_MINUTES','30')))
-    server = ThreadingHTTPServer(('127.0.0.1',6080), Handler)
+    port = int(os.environ.get('DESKTOP_PORT','6080'))
+    server = ThreadingHTTPServer(('127.0.0.1',port), Handler)
     server.desktop = d
-    print(json.dumps({'capture':d.capabilities['capture'],'control':d.capabilities['control'],'listen':'127.0.0.1:6080'}), flush=True)
+    print(json.dumps({'capture':d.capabilities['capture'],'control':d.capabilities['control'],'listen':f'127.0.0.1:{port}'}), flush=True)
     threading.Thread(target=server.serve_forever,daemon=True).start()
     try:
         while not d.finished.wait(1) and time.time() < d.deadline: pass
