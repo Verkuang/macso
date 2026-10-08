@@ -1,0 +1,172 @@
+name: macOS Web Desktop
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Desktop session minutes
+        type: choice
+        default: '30'
+        options: ['15', '30', '60', '120']
+permissions: {contents: read}
+concurrency:
+  group: macos-web-desktop
+  cancel-in-progress: false
+jobs:
+  desktop:
+    if: github.actor == github.repository_owner
+    name: Private browser-controlled macOS desktop
+    runs-on: macos-15-intel
+    timeout-minutes: 145
+    env:
+      TS_SOCKET: /tmp/macso-web-tailscale.sock
+      SESSION_MINUTES: ${{ inputs.minutes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile and check desktop permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc remote-desktop/input.swift -o remote-desktop/input-helper
+          remote-desktop/input-helper --status > "$RUNNER_TEMP/web-desktop-permissions.json"
+          cat "$RUNNER_TEMP/web-desktop-permissions.json"
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["capture"] and d["control"] else 1)' "$RUNNER_TEMP/web-desktop-permissions.json"
+      - name: Start authenticated private web desktop
+        env:
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MACOS_PASSWORD"
+          nohup python3 remote-desktop/server.py > "$RUNNER_TEMP/web-desktop.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/web-desktop.pid"
+          python3 - <<'PY'
+          import json, os, time, urllib.request, urllib.error
+          for attempt in range(45):
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:6080/health",timeout=2) as response:
+                      if json.load(response)["ready"]:
+                          break
+              except (OSError, ValueError):
+                  pass
+              time.sleep(1)
+          else:
+              raise SystemExit("Web desktop did not produce a real frame.")
+          try:
+              urllib.request.urlopen("http://127.0.0.1:6080/frame.jpg")
+          except urllib.error.HTTPError as error:
+              assert error.code == 401
+          else:
+              raise SystemExit("Unauthenticated screen access was incorrectly allowed.")
+          request=urllib.request.Request("http://127.0.0.1:6080/api/login",data=json.dumps({"password":os.environ["MACOS_PASSWORD"]}).encode(),headers={"Content-Type":"application/json"})
+          with urllib.request.urlopen(request) as response:
+              cookie=response.headers["Set-Cookie"].split(";")[0]
+          request=urllib.request.Request("http://127.0.0.1:6080/api/status",headers={"Cookie":cookie})
+          with urllib.request.urlopen(request) as response:
+              state=json.load(response)
+          assert state["control"], "Mouse/keyboard control was not available."
+          print("Real screen frames, password login, and protected screen access verified.")
+          PY
+      - name: Prepare encrypted device authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install tailscale
+          nohup sudo "$(brew --prefix)/bin/tailscaled" \
+            --tun=userspace-networking \
+            --state="$RUNNER_TEMP/macso-tailscale.state" \
+            --socket="$TS_SOCKET" \
+            > "$RUNNER_TEMP/macso-tailscaled.log" 2>&1 &
+          for attempt in {1..30}; do
+            [ -S "$TS_SOCKET" ] && break
+            sleep 1
+          done
+          test -S "$TS_SOCKET"
+          : > "$RUNNER_TEMP/macso-device-login.log"
+          nohup sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" up \
+            --hostname="macso-web-$GITHUB_RUN_ID" \
+            --accept-routes=false --accept-dns=false --timeout=10m \
+            > "$RUNNER_TEMP/macso-device-login.log" 2>&1 &
+          auth_url=""
+          for attempt in {1..60}; do
+            auth_url="$(sed -nE 's/.*(https:\/\/login\.tailscale\.com\/a\/[A-Za-z0-9]+).*/\1/p' "$RUNNER_TEMP/macso-device-login.log" | head -1)"
+            [ -n "$auth_url" ] && break
+            sleep 1
+          done
+          test -n "$auth_url" || { echo "::error::Device authorization URL was not obtained."; exit 1; }
+          echo "::add-mask::$auth_url"
+          mkdir -p "$RUNNER_TEMP/desktop-authorization"
+          cat > "$RUNNER_TEMP/desktop-session-public.pem" <<'PUBLICKEY'
+          -----BEGIN PUBLIC KEY-----
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAiyANEKTZ0oPBMPU7c1jf
+          xJ9jozlMUOFxziVSyOmomqAVx+KqfQxeKiYCDEVukf9Iso/zeFzDKh6w18Ew7CgZ
+          X1tNe0aIKWGIb2+u4qXz5/lFamhhdJSd3L5k5Ei8vW6SU6qC7/cviG3e5JlWKqiy
+          XB2V+DyHL5BNpsB5Qz55x2EbMf3xpoQ1xg3Ep5i6FuqNGCvg/ueZWDqk5ltkpAO3
+          KfuAYDciNuKTrDxVydhAVKFlVlxq40PNSMBYN3lYn5tsUYCEJWCQULbRg2K5b84u
+          iRT/oyZAFFCVyPkPOyR0Ju2NmcgS7xepIgCqcM6pVNIbSYQOLmWsq9AG4a0fOAfR
+          4sfICa26mf1HE7vPCgsDXTXM7dUE3gsII1jCZRdiIAjyTeinwsWaZHN2cf1eg/yy
+          qkhBAsuvhSqQL+v54pzRtkMtI7+jd2pkHBFxK7PkMerdqVqxxZ3IiWU6UkQThS04
+          y9Ra5o+YAQLfMKrEuyBawX3+vwOcSj7H7oHtJFlz2CxbAgMBAAE=
+          -----END PUBLIC KEY-----
+          PUBLICKEY
+          printf '%s' "$auth_url" | openssl pkeyutl -encrypt -pubin \
+            -inkey "$RUNNER_TEMP/desktop-session-public.pem" \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+            -out "$RUNNER_TEMP/desktop-authorization/device-login.enc"
+          echo "Encrypted authorization link:"
+          openssl base64 -A -in "$RUNNER_TEMP/desktop-authorization/device-login.enc"
+          echo
+          echo "Authorize this temporary device using the encrypted login artifact. It contains no plaintext password or login URL." >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish encrypted device authorization
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-authorization-${{ github.run_id }}
+          path: ${{ runner.temp }}/desktop-authorization/device-login.enc
+          retention-days: 1
+          if-no-files-found: error
+      - name: Wait for device approval
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          for attempt in {1..120}; do
+            if sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" status --json \
+              | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("BackendState")=="Running" else 1)'; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Device approval timed out."
+          exit 1
+      - name: Publish private browser address
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve --bg --tcp=8080 tcp://127.0.0.1:6080
+          desktop_ip="$(sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" ip -4)"
+          {
+            echo "## Private macOS web desktop"
+            echo "- Open: http://$desktop_ip:8080/"
+            echo "- Password: your MACOS_PASSWORD repository secret"
+            echo "- Session: $SESSION_MINUTES minutes, counted from server startup"
+            echo "- End: use End session in the web page, or Cancel workflow"
+            echo "- Final acceptance requires seeing the real screen and verifying an input action in the browser."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep browser desktop available for project testing
+        shell: bash
+        run: |
+          desktop_pid="$(cat "$RUNNER_TEMP/web-desktop.pid")"
+          while kill -0 "$desktop_pid" 2>/dev/null; do
+            sleep 10
+          done
+      - name: End private browser desktop
+        if: always()
+        shell: bash
+        run: |
+          if command -v tailscale >/dev/null 2>&1 && [ -S "$TS_SOCKET" ]; then
+            sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve reset || true
+            sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" logout || true
+          fi
+          if [ -f "$RUNNER_TEMP/web-desktop.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/web-desktop.pid")" 2>/dev/null || true
+          fi
