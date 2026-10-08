@@ -32,6 +32,17 @@ jobs:
           remote-desktop/input-helper --status > "$RUNNER_TEMP/web-desktop-permissions.json"
           cat "$RUNNER_TEMP/web-desktop-permissions.json"
           python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["capture"] and d["control"] else 1)' "$RUNNER_TEMP/web-desktop-permissions.json"
+      - name: Install official Google remote desktop for comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install --cask google-chrome
+          curl -fL --retry 2 --max-time 120 -o "$RUNNER_TEMP/chromeremotedesktop.dmg" https://dl.google.com/chrome-remote-desktop/chromeremotedesktop.dmg
+          hdiutil attach -nobrowse -mountpoint "$RUNNER_TEMP/crd-installer" "$RUNNER_TEMP/chromeremotedesktop.dmg"
+          pkgutil --check-signature "$RUNNER_TEMP/crd-installer/Chrome Remote Desktop Host.pkg"
+          sudo installer -pkg "$RUNNER_TEMP/crd-installer/Chrome Remote Desktop Host.pkg" -target /
+          hdiutil detach "$RUNNER_TEMP/crd-installer"
+          echo "Google host installed. Account login and macOS permissions still require desktop setup." >> "$GITHUB_STEP_SUMMARY"
       - name: Start authenticated private web desktop
         env:
           MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
