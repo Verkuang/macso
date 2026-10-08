@@ -80,6 +80,7 @@ jobs:
           test -n "$MACOS_PASSWORD"
           nohup python3 -u remote-desktop/server.py > "$RUNNER_TEMP/web-desktop.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/web-desktop.pid"
+          nohup /usr/bin/caffeinate -dims -w "$(cat "$RUNNER_TEMP/web-desktop.pid")" > /dev/null 2>&1 &
           python3 - <<'PY'
           import json, os, time, urllib.request, urllib.error
           from pathlib import Path
