@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 HTML = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>临时 Mac 桌面</title><link rel="stylesheet" href="/style.css"></head><body>
 <section id="login"><div class="card"><div class="icon">▣</div><h1>临时 Mac 桌面</h1><p>登录后查看和操作项目测试环境。</p><form id="loginForm"><label for="password">桌面密码</label><input id="password" type="password" autocomplete="current-password" required autofocus><button>进入桌面</button><p id="loginError" role="alert"></p></form></div></section>
-<main id="desktop" hidden><header><strong>临时 Mac 桌面</strong><span id="connection" role="status">正在连接…</span><span class="spacer"></span><span id="remaining"></span><button id="fullscreen">全屏</button><button id="logout">退出查看</button><button id="end" class="danger">结束会话</button></header>
+<main id="desktop" hidden><header><strong>临时 Mac 桌面</strong><span id="connection" role="status">正在连接…</span><span class="spacer"></span><span id="remaining"></span><button id="fullscreen">全屏</button><button id="logout">退出查看</button><span id="saveStatus"></span><button id="save">保存进度</button><button id="end" class="danger">结束会话</button></header>
 <nav aria-label="桌面工具"><button data-app="Finder">访达</button><button data-app="Safari">浏览器</button><button data-app="Xcode">Xcode</button><button data-app="Simulator">模拟器</button><span class="spacer"></span><button data-key="Enter">回车</button><button data-key="Escape">Esc</button><button data-key="Tab">Tab</button><button id="cmdspace">启动搜索</button><a href="/frame.jpg" download="macos-desktop.jpg">保存截图</a></nav>
 <div id="notice" role="status"></div><section id="stage" aria-label="远程画面"><img id="screen" alt="macOS 实时桌面，点击后可使用键盘" tabindex="0" draggable="false"></section>
 <footer><label for="text">发送文字</label><input id="text" placeholder="可输入中文、网址或测试文字"><button id="sendText">发送到光标位置</button><span id="message" role="status">点击桌面即可操作鼠标和键盘</span></footer></main><script src="/app.js"></script></body></html>'''
@@ -23,7 +23,7 @@ CSS = '''*{box-sizing:border-box}body{margin:0;background:#0b0f17;color:#ecf0f7;
 JS = r'''const $=id=>document.getElementById(id);let csrf='',active=false,canControl=false,mouseButton=0,drag=false,inputQueue=Promise.resolve(),lastClick=null,pressStart=null,pendingMove=null,moveBusy=false;const pressed=new Set();
 async function api(path,data){const r=await fetch(path,{method:data===undefined?'GET':'POST',headers:data===undefined?{}:{'Content-Type':'application/json','X-Desktop-CSRF':csrf},body:data===undefined?undefined:JSON.stringify(data)});if(!r.ok){if(r.status===401){active=false;$('login').hidden=false;$('desktop').hidden=true;}throw new Error(r.status===401?'请重新登录':r.status===429?'操作过于频繁，请稍后重试':'操作失败，请检查连接');}return r.json();}
 function notify(text){$('message').textContent=text;}function input(data){if(!canControl)return Promise.resolve();inputQueue=inputQueue.then(async()=>{try{await api('/api/input',data);}catch(e){notify(e.message);}});return inputQueue;}
-async function start(){try{const s=await api('/api/status');csrf=s.csrf;canControl=s.control;active=true;$('login').hidden=true;$('desktop').hidden=false;$('notice').textContent=canControl?'':'当前只允许查看画面，系统尚未允许鼠标和键盘操作。';document.querySelectorAll('[data-app],[data-key],#sendText,#cmdspace').forEach(b=>b.disabled=!canControl);$('remaining').textContent='剩余 '+Math.max(0,Math.ceil(s.remaining/60))+' 分钟';refresh();}catch(e){$('loginError').textContent=e.message;}}
+async function start(){try{const s=await api('/api/status');csrf=s.csrf;canControl=s.control;active=true;$('login').hidden=true;$('desktop').hidden=false;$('notice').textContent=canControl?'':'当前只允许查看画面，系统尚未允许鼠标和键盘操作。';document.querySelectorAll('[data-app],[data-key],#sendText,#cmdspace').forEach(b=>b.disabled=!canControl);$('remaining').textContent='剩余 '+Math.max(0,Math.ceil(s.remaining/60))+' 分钟';$('saveStatus').textContent=({new:'尚无保存记录',restored:'已恢复上次文件',saving:'正在保存…',saved:'文件已保存',failed:'保存失败，请检查容量'})[s.save?.state]||'保存服务准备中';refresh();}catch(e){$('loginError').textContent=e.message;}}
 function refresh(){if(active)$('screen').src='/frame.jpg?t='+Date.now();}$('screen').onload=()=>{$('connection').textContent='画面已连接'+(canControl?' · 可操作':' · 仅查看');if(active)setTimeout(refresh,650);};$('screen').onerror=()=>{$('connection').textContent='画面连接中断';if(active)setTimeout(refresh,1800);};
 $('loginForm').onsubmit=async e=>{e.preventDefault();$('loginError').textContent='';try{await api('/api/login',{password:$('password').value});$('password').value='';await start();}catch(e){$('loginError').textContent=e.message;}};
 function position(e){const r=$('screen').getBoundingClientRect();return{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};}
@@ -36,8 +36,16 @@ function key(e,down){if(!canControl)return;e.preventDefault();if(down)pressed.ad
 async function tap(code,meta=false){await input({type:'tap',code,meta});$('screen').focus();}document.querySelectorAll('[data-key]').forEach(b=>b.onclick=()=>tap(b.dataset.key));$('cmdspace').onclick=()=>tap('Space',true);
 document.querySelectorAll('[data-app]').forEach(b=>b.onclick=async()=>{try{await api('/api/launch',{app:b.dataset.app});notify('正在打开 '+b.textContent);$('screen').focus();}catch(e){notify(e.message);}});
 $('sendText').onclick=async()=>{if(!$('text').value)return;await input({type:'text',text:$('text').value});$('text').value='';$('screen').focus();};$('text').onkeydown=e=>{if(e.key==='Enter')$('sendText').click();};
+$('save').onclick=async()=>{try{await api('/api/save',{});$('saveStatus').textContent='正在保存…';}catch(e){notify(e.message);}};
 $('fullscreen').onclick=()=>{if(document.fullscreenElement)document.exitFullscreen();else $('desktop').requestFullscreen();};$('logout').onclick=async()=>{await api('/api/logout',{});active=false;$('desktop').hidden=true;$('login').hidden=false;};$('end').onclick=async()=>{if(!confirm('结束后这台临时 Mac 会关闭。确认结束会话？'))return;await api('/api/end',{});active=false;$('connection').textContent='会话已结束';canControl=false;};
-setInterval(async()=>{if(!active)return;try{const s=await api('/api/status');$('remaining').textContent='剩余 '+Math.max(0,Math.ceil(s.remaining/60))+' 分钟';}catch(e){notify(e.message);}},20000);start();'''
+setInterval(async()=>{if(!active)return;try{const s=await api('/api/status');$('remaining').textContent='剩余 '+Math.max(0,Math.ceil(s.remaining/60))+' 分钟';$('saveStatus').textContent=({new:'尚无保存记录',restored:'已恢复上次文件',saving:'正在保存…',saved:'文件已保存',failed:'保存失败，请检查容量'})[s.save?.state]||'保存服务准备中';}catch(e){notify(e.message);}},20000);start();'''
+
+def saved_state():
+    try:
+        data = json.loads(Path(os.environ.get('RUNNER_TEMP', tempfile.gettempdir()), 'macso-state-status.json').read_text())
+        return {k: data[k] for k in ('state', 'at') if k in data}
+    except (OSError, ValueError):
+        return {'state': 'preparing'}
 
 def installed_app(app):
     if app in {'Xcode', 'Simulator'}:
@@ -139,7 +147,7 @@ class Handler(BaseHTTPRequestHandler):
         token = self.session()
         if not token: return self.reply(401, {'error':'authentication required'})
         if route == '/api/status':
-            return self.reply(200, {'control':d.capabilities['control'], 'csrf':token, 'remaining':max(0,int(d.deadline-time.time())), 'frameAge':max(0,time.time()-d.frame_time)})
+            return self.reply(200, {'control':d.capabilities['control'], 'csrf':token, 'remaining':max(0,int(d.deadline-time.time())), 'frameAge':max(0,time.time()-d.frame_time), 'save':saved_state()})
         if route == '/frame.jpg':
             with d.frame_lock:
                 data = d.frame
@@ -199,6 +207,9 @@ class Handler(BaseHTTPRequestHandler):
         if route == '/api/logout':
             with d.session_lock: d.sessions.pop(token,None)
             return self.reply(200, {'ok':True}, headers={'Set-Cookie':'desktop-session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'})
+        if route == '/api/save':
+            Path(os.environ.get('RUNNER_TEMP', tempfile.gettempdir()), 'macso-state-request').touch(mode=0o600)
+            return self.reply(200, {'ok':True})
         if route == '/api/end':
             self.reply(200, {'ok':True})
             d.finished.set()
