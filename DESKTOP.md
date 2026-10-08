@@ -6,7 +6,7 @@
 
 1. 在 Settings → Secrets and variables → Actions 中添加仓库 Secret：`MACOS_PASSWORD`。Value 填你选择的 macOS 登录密码。
 2. 手动启动工作流。工作流将生成加密的 Tailscale 设备授权链接。当前控制此仓库的 Mac 保留解密私钥，解密后需要你授权这台临时机器。
-3. 工作流完成连接准备后，在运行摘要查看 `vnc://…:5900` 地址，用 Mac 的“屏幕共享”连接。用户名为 `runner`，密码为你保存的 `MACOS_PASSWORD`。
+3. 工作流完成连接准备后，在运行摘要查看 `vnc://…:5900` 地址，用 Mac 的“屏幕共享”连接。用户名为 `desktop`，密码为你保存的 `MACOS_PASSWORD`。
 4. 用完点 **Cancel workflow**；到时间也会自动结束。关闭客户端窗口不会结束服务器会话。
 
 ## 当前状态与限制
