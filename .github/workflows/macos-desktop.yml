@@ -49,8 +49,12 @@ jobs:
           sudo "$kickstart" -configure -users desktop -access -on -privs -all
           sudo "$kickstart" -configure -allowAccessFor -specifiedUsers
           sudo "$kickstart" -restart -agent
-          sudo dseditgroup -o create com.apple.access_screensharing
+          if ! sudo dscl . -read /Groups/com.apple.access_screensharing >/dev/null 2>&1; then
+            sudo dseditgroup -o create com.apple.access_screensharing
+          fi
           sudo dseditgroup -o edit -a desktop -t user com.apple.access_screensharing
+          dsmemberutil checkmembership -U desktop -G com.apple.access_screensharing
+          sudo dscl . -read /Users/desktop naprivs
           sudo launchctl enable system/com.apple.screensharing
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
           python3 - <<'PY'
