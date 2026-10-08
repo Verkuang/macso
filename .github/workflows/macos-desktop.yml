@@ -49,6 +49,7 @@ jobs:
             sleep 1
           done
           test -S "$TS_SOCKET"
+          : > "$RUNNER_TEMP/macso-device-login.log"
           nohup sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" up \
             --hostname="macso-desktop-$GITHUB_RUN_ID" \
             --accept-routes=false --accept-dns=false --timeout=10m \
