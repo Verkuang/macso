@@ -53,7 +53,9 @@ def installed_app(app):
 class Desktop:
     def __init__(self, helper, password, minutes):
         self.password = password.encode()
-        self.deadline = time.time() + minutes * 60
+        self.duration = minutes * 60
+        self.started = False
+        self.deadline = time.time() + 20 * 60  # Bounded setup/first-login window.
         self.capabilities = json.loads(subprocess.check_output([str(helper), '--status']))
         if not self.capabilities['capture']:
             raise RuntimeError('The runner does not allow screen capture.')
@@ -167,6 +169,11 @@ class Handler(BaseHTTPRequestHandler):
                     attempts.append(time.time())
                     return self.reply(401, {'error':'invalid credentials'})
                 attempts.clear()
+                if data.get('begin', True) and not d.started:
+                    d.started = True
+                    d.deadline = time.time() + d.duration
+                    for existing in d.sessions:
+                        d.sessions[existing] = d.deadline
                 token = secrets.token_urlsafe(32)
                 d.sessions[token] = d.deadline
             return self.reply(200, {'ok':True}, headers={'Set-Cookie':f'desktop-session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max(1,int(d.deadline-time.time()))}'})
@@ -202,7 +209,7 @@ def main():
     password = os.environ.pop('MACOS_PASSWORD', '')
     if not password: raise RuntimeError('MACOS_PASSWORD is required.')
     folder = Path(__file__).resolve().parent
-    d = Desktop(folder/'input-helper',password,int(os.environ.get('SESSION_MINUTES','30')))
+    d = Desktop(folder/'input-helper',password,int(os.environ.get('SESSION_MINUTES','60')))
     port = int(os.environ.get('DESKTOP_PORT','6080'))
     server = ThreadingHTTPServer(('127.0.0.1',port), Handler)
     server.desktop = d
