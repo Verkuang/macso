@@ -1,0 +1,48 @@
+name: macOS Desktop Screenshot
+on:
+  workflow_dispatch:
+  push:
+    paths: [".github/workflows/macos-desktop-screenshot.yml"]
+permissions: {contents: read}
+jobs:
+  screenshot:
+    if: github.actor == github.repository_owner
+    name: Capture actual hosted macOS desktop
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - name: Capture actual desktop and permission status
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/desktop-screenshot"
+          sw_vers > "$RUNNER_TEMP/desktop-screenshot/environment.txt"
+          cat > "$RUNNER_TEMP/display-check.swift" <<'SWIFT'
+          import CoreGraphics
+          print("Screen capture permission:", CGPreflightScreenCaptureAccess())
+          let display = CGMainDisplayID()
+          print("Main display:", display)
+          print("Display size:", CGDisplayPixelsWide(display), "x", CGDisplayPixelsHigh(display))
+          SWIFT
+          swift "$RUNNER_TEMP/display-check.swift" >> "$RUNNER_TEMP/desktop-screenshot/environment.txt"
+          set +e
+          /usr/sbin/screencapture -x "$RUNNER_TEMP/desktop-screenshot/desktop.png" > "$RUNNER_TEMP/desktop-screenshot/capture.log" 2>&1
+          capture_result=$?
+          set -e
+          echo "Screenshot exit status: $capture_result" >> "$RUNNER_TEMP/desktop-screenshot/environment.txt"
+          cat "$RUNNER_TEMP/desktop-screenshot/environment.txt"
+          cat "$RUNNER_TEMP/desktop-screenshot/capture.log"
+          if [ -s "$RUNNER_TEMP/desktop-screenshot/desktop.png" ]; then
+            echo "ACTUAL_DESKTOP_SCREENSHOT_CREATED" >> "$GITHUB_STEP_SUMMARY"
+            sips -g pixelWidth -g pixelHeight "$RUNNER_TEMP/desktop-screenshot/desktop.png"
+          else
+            echo "SCREENSHOT_UNAVAILABLE: No actual desktop image was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Save actual screenshot or diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-desktop-screenshot-${{ github.run_id }}
+          path: ${{ runner.temp }}/desktop-screenshot/
+          retention-days: 3
+          if-no-files-found: error
