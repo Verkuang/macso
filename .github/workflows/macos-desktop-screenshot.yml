@@ -19,7 +19,10 @@ jobs:
           sw_vers > "$RUNNER_TEMP/desktop-screenshot/environment.txt"
           cat > "$RUNNER_TEMP/display-check.swift" <<'SWIFT'
           import CoreGraphics
+          import ApplicationServices
           print("Screen capture permission:", CGPreflightScreenCaptureAccess())
+          print("Mouse/keyboard posting permission:", CGPreflightPostEventAccess())
+          print("Accessibility permission:", AXIsProcessTrusted())
           let display = CGMainDisplayID()
           print("Main display:", display)
           print("Display size:", CGDisplayPixelsWide(display), "x", CGDisplayPixelsHigh(display))
