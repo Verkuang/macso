@@ -1,0 +1,159 @@
+name: Temporary macOS Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Desktop session minutes
+        type: choice
+        default: '30'
+        options: ['15', '30', '60', '120']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: temporary-macos-desktop
+  cancel-in-progress: false
+
+jobs:
+  desktop:
+    if: github.actor == github.repository_owner
+    name: Private macOS desktop for project testing
+    runs-on: macos-15-intel
+    timeout-minutes: 145
+    env:
+      TS_SOCKET: ${{ runner.temp }}/macso-tailscale.sock
+      SESSION_MINUTES: ${{ inputs.minutes }}
+    steps:
+      - name: Require private desktop password
+        env:
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_PASSWORD" ]; then
+            echo "::error::Create the repository Actions secret MACOS_PASSWORD before starting this workflow."
+            exit 1
+          fi
+      - name: Prepare encrypted device authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install tailscale
+          nohup sudo "$(brew --prefix)/bin/tailscaled" \
+            --tun=userspace-networking \
+            --state="$RUNNER_TEMP/macso-tailscale.state" \
+            --socket="$TS_SOCKET" \
+            > "$RUNNER_TEMP/macso-tailscaled.log" 2>&1 &
+          for attempt in {1..30}; do
+            [ -S "$TS_SOCKET" ] && break
+            sleep 1
+          done
+          test -S "$TS_SOCKET"
+          nohup sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" up \
+            --hostname="macso-desktop-$GITHUB_RUN_ID" \
+            --accept-routes=false --accept-dns=false --timeout=10m \
+            > "$RUNNER_TEMP/macso-device-login.log" 2>&1 &
+          auth_url=""
+          for attempt in {1..60}; do
+            auth_url="$(sed -nE 's/.*(https:\/\/login\.tailscale\.com\/a\/[A-Za-z0-9]+).*/\1/p' "$RUNNER_TEMP/macso-device-login.log" | head -1)"
+            [ -n "$auth_url" ] && break
+            sleep 1
+          done
+          test -n "$auth_url" || { echo "::error::Device authorization URL was not obtained."; exit 1; }
+          echo "::add-mask::$auth_url"
+          mkdir -p "$RUNNER_TEMP/desktop-authorization"
+          cat > "$RUNNER_TEMP/desktop-session-public.pem" <<'PUBLICKEY'
+          -----BEGIN PUBLIC KEY-----
+          MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAiyANEKTZ0oPBMPU7c1jf
+          xJ9jozlMUOFxziVSyOmomqAVx+KqfQxeKiYCDEVukf9Iso/zeFzDKh6w18Ew7CgZ
+          X1tNe0aIKWGIb2+u4qXz5/lFamhhdJSd3L5k5Ei8vW6SU6qC7/cviG3e5JlWKqiy
+          XB2V+DyHL5BNpsB5Qz55x2EbMf3xpoQ1xg3Ep5i6FuqNGCvg/ueZWDqk5ltkpAO3
+          KfuAYDciNuKTrDxVydhAVKFlVlxq40PNSMBYN3lYn5tsUYCEJWCQULbRg2K5b84u
+          iRT/oyZAFFCVyPkPOyR0Ju2NmcgS7xepIgCqcM6pVNIbSYQOLmWsq9AG4a0fOAfR
+          4sfICa26mf1HE7vPCgsDXTXM7dUE3gsII1jCZRdiIAjyTeinwsWaZHN2cf1eg/yy
+          qkhBAsuvhSqQL+v54pzRtkMtI7+jd2pkHBFxK7PkMerdqVqxxZ3IiWU6UkQThS04
+          y9Ra5o+YAQLfMKrEuyBawX3+vwOcSj7H7oHtJFlz2CxbAgMBAAE=
+          -----END PUBLIC KEY-----
+          PUBLICKEY
+          printf '%s' "$auth_url" | openssl pkeyutl -encrypt -pubin \
+            -inkey "$RUNNER_TEMP/desktop-session-public.pem" \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+            -out "$RUNNER_TEMP/desktop-authorization/device-login.enc"
+          echo "Encrypted authorization link:"
+          openssl base64 -A -in "$RUNNER_TEMP/desktop-authorization/device-login.enc"
+          echo
+          echo "Authorize this temporary device using the encrypted login artifact. It contains no plaintext password or login URL." >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish encrypted device authorization
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-authorization-${{ github.run_id }}
+          path: ${{ runner.temp }}/desktop-authorization/device-login.enc
+          retention-days: 1
+          if-no-files-found: error
+      - name: Wait for device approval
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          for attempt in {1..120}; do
+            if sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" status --json \
+              | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("BackendState")=="Running" else 1)'; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Device approval timed out."
+          exit 1
+      - name: Start authenticated Apple Screen Sharing
+        env:
+          MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo dscl . -passwd /Users/runner "$MACOS_PASSWORD"
+          kickstart=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
+          sudo "$kickstart" -activate -configure -access -on \
+            -allowAccessFor -specifiedUsers -users runner -privs -all -restart -agent
+          sudo launchctl enable system/com.apple.screensharing
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
+          python3 - <<'PY'
+          import socket, time
+          for attempt in range(30):
+              try:
+                  with socket.create_connection(("127.0.0.1", 5900), timeout=2) as conn:
+                      header = conn.recv(12)
+                      if header.startswith(b"RFB "):
+                          print("Screen Sharing protocol available:", header.decode().strip())
+                          break
+              except OSError:
+                  pass
+              time.sleep(2)
+          else:
+              raise SystemExit("Screen Sharing protocol did not become available")
+          PY
+          sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve --bg --tcp=5900 tcp://127.0.0.1:5900
+          desktop_ip="$(sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" ip -4)"
+          {
+            echo "## Temporary macOS desktop connection"
+            echo "- Address: vnc://$desktop_ip:5900"
+            echo "- User: runner"
+            echo "- Password: your MACOS_PASSWORD repository secret"
+            echo "- Session length: $SESSION_MINUTES minutes"
+            echo "- End early: Cancel workflow"
+            echo "- Apple privacy permissions may limit screen viewing/control. A listening port does not prove that the desktop is usable; verify it in the client."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep project testing desktop available
+        shell: bash
+        run: |
+          end_time=$(( $(date +%s) + SESSION_MINUTES * 60 ))
+          while [ "$(date +%s)" -lt "$end_time" ]; do
+            sleep 15
+          done
+      - name: End private desktop session
+        if: always()
+        shell: bash
+        run: |
+          if command -v tailscale >/dev/null 2>&1 && [ -S "$TS_SOCKET" ]; then
+            sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve reset || true
+            sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" logout || true
+          fi
+          sudo launchctl disable system/com.apple.screensharing || true
