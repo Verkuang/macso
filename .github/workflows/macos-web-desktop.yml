@@ -7,7 +7,12 @@ on:
         type: choice
         default: '60'
         options: ['15', '30', '60', '120']
-permissions: {contents: read, actions: read, id-token: write}
+      retention:
+        description: 备份保存期限
+        type: choice
+        default: '永久'
+        options: ['永久', '7天', '30天', '90天']
+permissions: {contents: write, actions: read, id-token: write}
 concurrency:
   group: macos-web-desktop
   cancel-in-progress: false
@@ -20,6 +25,7 @@ jobs:
     env:
       TS_SOCKET: /tmp/macso-web-tailscale.sock
       SESSION_MINUTES: ${{ inputs.minutes }}
+      MACSO_STATE_RETENTION: ${{ inputs.retention }}
     steps:
       - uses: actions/checkout@v4
         with:
