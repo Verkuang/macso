@@ -1,7 +1,13 @@
 name: Verify encrypted desktop restore
 on:
   workflow_dispatch:
-permissions: {contents: read, actions: read}
+    inputs:
+      retention:
+        description: 保存方式验证
+        type: choice
+        default: '永久'
+        options: ['永久', '30天']
+permissions: {contents: write, actions: read}
 jobs:
   save:
     if: ${{ github.actor == github.repository_owner && github.ref == 'refs/heads/main' }}
@@ -9,6 +15,8 @@ jobs:
     timeout-minutes: 8
     env:
       MACOS_PASSWORD: ${{ secrets.MACOS_PASSWORD }}
+      MACSO_STATE_RETENTION: ${{ inputs.retention }}
+      MACSO_STATE_RELEASE_TAG: macso-state-verification
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
