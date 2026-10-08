@@ -8,6 +8,8 @@ from pathlib import Path, PurePosixPath
 import plistlib
 import tarfile
 import tempfile
+import subprocess
+import sys
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 MAGIC = b"MACSO_STATE_1\n"
@@ -115,6 +117,11 @@ def restore(home, password, source):
             name = temp.name
         os.chmod(name, 0o600)
         os.replace(name, target)
+    if sys.platform == "darwin" and home.resolve() == Path.home().resolve():
+        for target, _ in prepared:
+            if target.parent.name == "Preferences":
+                domain = "-g" if target.name == ".GlobalPreferences.plist" else target.name[:-6]
+                subprocess.run(["/usr/bin/defaults", "import", domain, str(target)], check=True, capture_output=True, timeout=10)
     return {"restored_entries": len(prepared)}
 
 def main():
