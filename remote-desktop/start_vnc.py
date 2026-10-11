@@ -1,5 +1,6 @@
 """Enable screen-only Apple VNC for this ephemeral project-test runner."""
 import os
+import pwd
 import socket
 import subprocess
 import time
@@ -13,8 +14,16 @@ if not 6 <= len(password) <= 8 or any(ord(c) < 33 or ord(c) > 126 for c in passw
 kickstart = '/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart'
 env = dict(os.environ, CO_VNCPW=password)
 # Apple's helper accepts the password through CO_VNCPW, keeping it out of argv/logs.
-command = [kickstart, '-activate', '-configure', '-access', '-on', '-allowAccessFor', '-specifiedUsers', '-users', 'runner', '-privs', '-ControlObserve', '-clientopts', '-setvnclegacy', '-vnclegacy', 'yes', '-setvncpw', '-restart', '-agent']
-result = subprocess.run(command,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+users = ['runner']
+try:
+    pwd.getpwnam('desktop')
+except KeyError:
+    pass
+else:
+    users.append('desktop')
+    subprocess.run(['/usr/sbin/dseditgroup', '-o', 'edit', '-a', 'desktop', '-t', 'user', 'com.apple.access_screensharing'], check=True, timeout=45)
+command = [kickstart, '-activate', '-configure', '-access', '-on', '-allowAccessFor', '-specifiedUsers', '-users', ','.join(users), '-privs', '-ControlObserve', '-clientopts', '-setvnclegacy', '-vnclegacy', 'yes', '-setvncpw', '-restart', '-agent']
+result = subprocess.run(command,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=45)
 if result.returncode:
     raise SystemExit('Apple VNC setup failed; no password or helper output is logged.')
 subprocess.run(['/bin/launchctl','enable','system/com.apple.screensharing'],check=True)
