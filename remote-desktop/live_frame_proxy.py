@@ -1,6 +1,7 @@
 """Temporary loopback compression proxy; all authentication stays in the original server."""
 import hashlib
 import http.client
+import os
 import select
 import socket
 import subprocess
@@ -14,6 +15,7 @@ UPSTREAM = ('127.0.0.1', 6080)
 lock = threading.Lock()
 cached = (None, None)
 HOP = {'connection', 'transfer-encoding', 'content-length', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'upgrade'}
+FIT_SCREEN = b"\nfunction fitScreen(){const img=document.getElementById('screen'),stage=document.getElementById('stage');if(!img.naturalWidth||!img.naturalHeight)return;const scale=Math.min(stage.clientWidth/img.naturalWidth,stage.clientHeight/img.naturalHeight);img.style.width=(img.naturalWidth*scale)+'px';img.style.height=(img.naturalHeight*scale)+'px';} document.getElementById('screen').addEventListener('load',fitScreen);window.addEventListener('resize',fitScreen);\n"
 
 def compress(data):
     global cached
@@ -59,6 +61,8 @@ class Proxy(BaseHTTPRequestHandler):
             response = conn.getresponse()
             data = response.read()
             headers = response.getheaders()
+            if response.status == 200 and urlsplit(self.path).path == '/app.js':
+                data += FIT_SCREEN
             if response.status == 200 and urlsplit(self.path).path == '/frame.jpg' and data.startswith(b'\xff\xd8'):
                 original_size = len(data)
                 try:
@@ -98,7 +102,7 @@ class Proxy(BaseHTTPRequestHandler):
             pass
 
 def main():
-    server = ThreadingHTTPServer(('127.0.0.1',6081),Proxy)
+    server = ThreadingHTTPServer(('127.0.0.1',int(os.environ.get('DESKTOP_PROXY_PORT','6081'))),Proxy)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever,daemon=True).start()
     while True:
