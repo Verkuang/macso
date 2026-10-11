@@ -22,7 +22,12 @@ except KeyError:
 else:
     users.append('desktop')
     subprocess.run(['/usr/sbin/dseditgroup', '-o', 'edit', '-a', 'desktop', '-t', 'user', 'com.apple.access_screensharing'], check=True, timeout=45)
-command = [kickstart, '-activate', '-configure', '-access', '-on', '-allowAccessFor', '-specifiedUsers', '-users', ','.join(users), '-privs', '-ControlObserve', '-clientopts', '-setvnclegacy', '-vnclegacy', 'yes', '-setvncpw', '-restart', '-agent']
+# kickstart explicitly ignores -privs when -allowAccessFor is present.
+# Configure the allowed-user policy separately so ControlObserve is applied.
+policy = subprocess.run([kickstart, '-configure', '-allowAccessFor', '-specifiedUsers'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=45)
+if policy.returncode:
+    raise SystemExit('Apple VNC allowed-user configuration failed.')
+command = [kickstart, '-activate', '-configure', '-access', '-on', '-users', ','.join(users), '-privs', '-ControlObserve', '-clientopts', '-setvnclegacy', '-vnclegacy', 'yes', '-setvncpw', '-restart', '-agent']
 result = subprocess.run(command,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=45)
 if result.returncode:
     raise SystemExit('Apple VNC setup failed; no password or helper output is logged.')
