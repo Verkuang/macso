@@ -49,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m venv "$RUNNER_TEMP/macso-state-python"
-          "$RUNNER_TEMP/macso-state-python/bin/pip" install cryptography==50.0.2
+          "$RUNNER_TEMP/macso-state-python/bin/pip" install cryptography==50.0.2 websockify==0.13.0
           echo "MACSO_STATE_PYTHON=$RUNNER_TEMP/macso-state-python/bin/python" >> "$GITHUB_ENV"
           npm install --prefix remote-desktop --ignore-scripts --no-audit --no-fund
       - name: Restore last saved files before opening desktop
@@ -70,6 +70,29 @@ jobs:
           remote-desktop/input-helper --status > "$RUNNER_TEMP/web-desktop-permissions.json"
           cat "$RUNNER_TEMP/web-desktop-permissions.json"
           python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["capture"] and d["control"] else 1)' "$RUNNER_TEMP/web-desktop-permissions.json"
+      - name: Install pinned official noVNC client
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 2 --max-time 120 -o "$RUNNER_TEMP/novnc.tar.gz" https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz
+          echo "5066103959ef4e9b10f37e5a148627360dd8414e4cf8a7db92bdbd022e728aaa  $RUNNER_TEMP/novnc.tar.gz" | shasum -a 256 -c -
+          mkdir -p remote-desktop/novnc
+          tar -xzf "$RUNNER_TEMP/novnc.tar.gz" -C remote-desktop/novnc --strip-components=1
+      - name: Restore optional authenticated Apple VNC
+        id: apple_vnc
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          MACOS_VNC_PASSWORD: ${{ secrets.MACOS_VNC_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$MACOS_VNC_PASSWORD" ]; then
+            echo "VNC not configured: save MACOS_VNC_PASSWORD (6-8 printable ASCII characters). Existing web desktop is retained." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          sudo --preserve-env=MACOS_VNC_PASSWORD "$(command -v python3)" remote-desktop/start_vnc.py
+          echo "Apple VNC protocol started; real desktop viewing and input remain to be tested." >> "$GITHUB_STEP_SUMMARY"
       - name: Start authenticated private web desktop
         timeout-minutes: 3
         env:
@@ -78,7 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$MACOS_PASSWORD"
-          nohup python3 -u remote-desktop/server.py > "$RUNNER_TEMP/web-desktop.log" 2>&1 &
+          nohup "$MACSO_STATE_PYTHON" -u remote-desktop/server.py > "$RUNNER_TEMP/web-desktop.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/web-desktop.pid"
           nohup /usr/bin/caffeinate -dims -w "$(cat "$RUNNER_TEMP/web-desktop.pid")" > /dev/null 2>&1 &
           python3 - <<'PY'
@@ -203,16 +226,23 @@ jobs:
           echo "::error::Device approval timed out."
           exit 1
       - name: Publish private browser address
+        env:
+          VNC_CONFIGURED: ${{ secrets.MACOS_VNC_PASSWORD != '' }}
         shell: bash
         run: |
           set -euo pipefail
           sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve --bg --tcp=8080 tcp://127.0.0.1:6080
           sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve --service=svc:macso --tcp=8080 tcp://127.0.0.1:6080
+          if [ "$VNC_CONFIGURED" = "true" ] && python3 -c 'import socket; s=socket.create_connection(("127.0.0.1",5900),timeout=2); s.settimeout(2); assert s.recv(12).startswith(b"RFB ")' 2>/dev/null; then
+            sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve --bg --tcp=5900 tcp://127.0.0.1:5900
+          fi
           tailnet_dns="$(sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["CurrentTailnet"]["MagicDNSSuffix"])')"
           desktop_ip="$(sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" ip -4)"
           {
             echo "## Private macOS web desktop"
             echo "- Fixed private entry: http://macso.$tailnet_dns:8080/"
+            echo "- Browser VNC (same private login): http://macso.$tailnet_dns:8080/vnc"
+            echo "- Native VNC, when configured: vnc://$desktop_ip:5900 (separate MACOS_VNC_PASSWORD; no username)"
             echo "- Direct fallback: http://$desktop_ip:8080/"
             echo "- The fixed service host must be approved in Tailscale Services."
             echo "- Password: your MACOS_PASSWORD repository secret"
@@ -249,6 +279,8 @@ jobs:
             sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve reset || true
             sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" logout || true
           fi
+          sudo launchctl disable system/com.apple.screensharing || true
           if [ -f "$RUNNER_TEMP/web-desktop.pid" ]; then
             kill "$(cat "$RUNNER_TEMP/web-desktop.pid")" 2>/dev/null || true
           fi
+
