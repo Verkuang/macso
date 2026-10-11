@@ -12,9 +12,12 @@ HTML = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="vi
 CSS = '#view{height:calc(100vh - 130px);background:#05080c}#info{padding:12px;color:#b6c7de}header input{width:160px}'
 
 JS = '''import RFB from '/vnc-static/core/rfb.js';
+// Pinned noVNC 1.6.0 adapter: this page uses Apple's enabled VNC password mode.
+// Apple lists account authentication first; accept only password authentication (type 2).
+class PasswordRFB extends RFB { _isSupportedSecurityType(type) { return type === 2; } }
 const $=id=>document.getElementById(id);let rfb;
 async function check(){try{const r=await fetch('/api/vnc-status');if(r.status===401){location.href='/';return;}const s=await r.json();$('connect').disabled=!s.available;$('info').textContent=s.available?'VNC 服务已启动。请输入单独配置的 VNC 密码。':'当前 Mac 尚未启动 VNC 服务。原网页桌面仍可使用；需要在启动流程配置 MACOS_VNC_PASSWORD。';}catch(e){$('info').textContent='检查连接失败，请稍后重试';}}
-$('connect').onclick=()=>{rfb?.disconnect();const credentials={password:$('vncPassword').value};$('vncPassword').value='';$('info').textContent='正在连接…';rfb=new RFB($('view'),`${location.protocol==='https:'?'wss':'ws'}://${location.host}/vnc-socket`,{credentials});rfb.scaleViewport=true;rfb.resizeSession=false;rfb.qualityLevel=4;rfb.compressionLevel=6;rfb.addEventListener('connect',()=>{$('info').textContent='VNC 已连接 · 点击桌面即可操作';});rfb.addEventListener('disconnect',e=>{$('info').textContent=e.detail.clean?'VNC 已断开':'VNC 连接中断，请检查服务和密码';});rfb.addEventListener('credentialsrequired',()=>{$('info').textContent='请重新输入 VNC 密码并连接。';rfb.disconnect();});rfb.addEventListener('securityfailure',()=>{$('info').textContent='VNC 身份验证失败，请检查单独的 VNC 密码';});};
+$('connect').onclick=()=>{rfb?.disconnect();const credentials={password:$('vncPassword').value};$('vncPassword').value='';$('info').textContent='正在连接…';rfb=new PasswordRFB($('view'),`${location.protocol==='https:'?'wss':'ws'}://${location.host}/vnc-socket`,{credentials});rfb.scaleViewport=true;rfb.resizeSession=false;rfb.qualityLevel=4;rfb.compressionLevel=6;rfb.addEventListener('connect',()=>{$('info').textContent='VNC 已连接 · 点击桌面即可操作';});rfb.addEventListener('disconnect',e=>{$('info').textContent=e.detail.clean?'VNC 已断开':'VNC 连接中断，请检查服务和密码';});rfb.addEventListener('credentialsrequired',()=>{$('info').textContent='请重新输入 VNC 密码并连接。';rfb.disconnect();});rfb.addEventListener('securityfailure',()=>{$('info').textContent='VNC 身份验证失败，请检查单独的 VNC 密码';});};
 $('disconnect').onclick=()=>rfb?.disconnect();$('full').onclick=()=>$('view').requestFullscreen();check();'''
 
 def ready():
