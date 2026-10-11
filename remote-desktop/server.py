@@ -28,7 +28,7 @@ function notify(text){$('message').textContent=text;}
 function input(data){if(!canControl)return Promise.resolve();if(pendingMove?.data.drag&&data.type==='mouse'&&data.action==='up')inputEvents.push(pendingMove);pendingMove=null;return new Promise(resolve=>{inputEvents.push({data,resolve});pumpInput();});}
 async function pumpInput(){if(inputBusy)return;inputBusy=true;try{while(canControl&&(inputEvents.length||pendingMove)){let item;if(inputEvents.length)item=inputEvents.shift();else{item=pendingMove;pendingMove=null;}try{await api('/api/input',item.data);}catch(e){notify(e.message);}finally{item.resolve?.();}}}finally{inputBusy=false;if(!canControl)pendingMove=null;while(!canControl&&inputEvents.length)inputEvents.shift().resolve?.();}}
 async function start(){try{const s=await api('/api/status');csrf=s.csrf;canControl=s.control;active=true;$('login').hidden=true;$('desktop').hidden=false;$('notice').textContent=canControl?'':'当前只允许查看画面，系统尚未允许鼠标和键盘操作。';document.querySelectorAll('[data-app],[data-key],#sendText,#cmdspace').forEach(b=>b.disabled=!canControl);$('remaining').textContent='剩余 '+Math.max(0,Math.ceil(s.remaining/60))+' 分钟';$('saveStatus').textContent=({new:'尚无保存记录',restored:'已恢复上次文件',saving:'正在保存…',saved:'文件已保存',failed:'保存失败，请检查容量'})[s.save?.state]||'保存服务准备中';refresh();}catch(e){$('loginError').textContent=e.message;}}
-async function refresh(){if(!active||frameBusy||document.hidden)return;frameBusy=true;let delay=30;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),30000);try{const r=await fetch('/frame.jpg?after='+frameSequence,{cache:'no-store',signal:controller.signal});if(!r.ok){if(r.status===401){active=false;canControl=false;pendingMove=null;$('login').hidden=false;$('desktop').hidden=true;}throw new Error('frame unavailable');}const blob=await r.blob();if(!active)return;const next=URL.createObjectURL(blob),previous=frameUrl;frameUrl=next;$('screen').src=next;try{await $('screen').decode();}finally{if(previous)URL.revokeObjectURL(previous);}frameSequence=Number(r.headers.get('X-Frame-Sequence'))||0;$('screen').dataset.frameSequence=String(frameSequence);$('connection').textContent='画面已连接'+(canControl?' · 可操作':' · 仅查看');}catch(e){$('connection').textContent='画面连接中断';delay=1000;}finally{clearTimeout(timeout);frameBusy=false;if(active&&!document.hidden)setTimeout(refresh,delay);}}
+async function refresh(){if(!active||frameBusy||document.hidden)return;frameBusy=true;let delay=100;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),30000);try{const r=await fetch('/frame.jpg?after='+frameSequence,{cache:'no-store',signal:controller.signal});if(!r.ok){if(r.status===401){active=false;canControl=false;pendingMove=null;$('login').hidden=false;$('desktop').hidden=true;}throw new Error('frame unavailable');}if(r.status!==204){const blob=await r.blob();if(!active)return;const next=URL.createObjectURL(blob),previous=frameUrl;frameUrl=next;$('screen').src=next;try{await $('screen').decode();}finally{if(previous)URL.revokeObjectURL(previous);}frameSequence=Number(r.headers.get('X-Frame-Sequence'))||0;$('screen').dataset.frameSequence=String(frameSequence);}$('connection').textContent='画面已连接'+(canControl?' · 可操作':' · 仅查看');}catch(e){$('connection').textContent='画面连接中断';delay=1000;}finally{clearTimeout(timeout);frameBusy=false;if(active&&!document.hidden)setTimeout(refresh,delay);}}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
 $('loginForm').onsubmit=async e=>{e.preventDefault();$('loginError').textContent='';try{await api('/api/login',{password:$('password').value});$('password').value='';await start();}catch(e){$('loginError').textContent=e.message;}};
 function position(e){const r=$('screen').getBoundingClientRect();return{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};}
@@ -99,15 +99,19 @@ class Desktop:
                 try:
                     # The browser draws the immediate local arrow; omit the delayed screenshot cursor.
                     subprocess.run(['/usr/sbin/screencapture', '-x', '-t', 'jpg', str(path)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                    # Smaller frames keep a slow link from showing an old desktop for tens of seconds.
+                    subprocess.run(['/usr/bin/sips', '-Z', '1280', '-s', 'format', 'jpeg', '-s', 'formatOptions', '45', str(path)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
                     data = path.read_bytes()
                     if data.startswith(b'\xff\xd8'):
                         with self.frame_lock:
-                            self.frame, self.frame_time = data, time.time()
-                            self.frame_sequence += 1
+                            if self.frame != data:
+                                self.frame = data
+                                self.frame_sequence += 1
+                            self.frame_time = time.time()
                             self.frame_lock.notify_all()
                 except (OSError, subprocess.SubprocessError):
                     pass
-                self.capture_wake.wait(0.1)
+                self.capture_wake.wait(0.5)
         self.finished.set()
 
     def frame_after(self, sequence):
@@ -115,7 +119,7 @@ class Desktop:
             self.last_frame_request = time.monotonic()
             self.capture_wake.set()
             if self.frame_sequence <= sequence and not self.finished.is_set():
-                self.frame_lock.wait_for(lambda: self.frame_sequence > sequence or self.finished.is_set(), timeout=0.5)
+                self.frame_lock.wait_for(lambda: self.frame_sequence > sequence or self.finished.is_set(), timeout=2)
             return self.frame, self.frame_sequence
 
     def command(self, data):
@@ -198,6 +202,8 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 return self.reply(400, {'error':'invalid frame sequence'})
             data, current = d.frame_after(sequence)
+            if data and sequence and current == sequence:
+                return self.reply(204, b'', headers={'X-Frame-Sequence':str(current)})
             return self.reply(200,data,'image/jpeg', {'X-Frame-Sequence':str(current)}) if data else self.reply(503, {'error':'frame not ready'})
         return self.reply(404, {'error':'not found'})
 
@@ -283,5 +289,6 @@ def main():
         d.process.wait(timeout=5)
 
 if __name__ == '__main__': main()
+
 
 
