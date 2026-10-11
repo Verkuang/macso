@@ -207,10 +207,14 @@ jobs:
         run: |
           set -euo pipefail
           sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve --bg --tcp=8080 tcp://127.0.0.1:6080
+          sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve --service=svc:macso --tcp=8080 tcp://127.0.0.1:6080
+          tailnet_dns="$(sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["CurrentTailnet"]["MagicDNSSuffix"])')"
           desktop_ip="$(sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" ip -4)"
           {
             echo "## Private macOS web desktop"
-            echo "- Open: http://$desktop_ip:8080/"
+            echo "- Fixed private entry: http://macso.$tailnet_dns:8080/"
+            echo "- Direct fallback: http://$desktop_ip:8080/"
+            echo "- The fixed service host must be approved in Tailscale Services."
             echo "- Password: your MACOS_PASSWORD repository secret"
             echo "- Session: $SESSION_MINUTES minutes, counted from first browser password login (20-minute setup/login limit)"
             echo "- End: use End session in the web page, or Cancel workflow"
@@ -241,6 +245,7 @@ jobs:
         shell: bash
         run: |
           if command -v tailscale >/dev/null 2>&1 && [ -S "$TS_SOCKET" ]; then
+            sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve drain svc:macso || true
             sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" serve reset || true
             sudo "$(brew --prefix)/bin/tailscale" --socket="$TS_SOCKET" logout || true
           fi
