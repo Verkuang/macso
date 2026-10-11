@@ -93,6 +93,7 @@ jobs:
             exit 0
           fi
           sudo --preserve-env=MACOS_VNC_PASSWORD "$(command -v python3)" remote-desktop/start_vnc.py
+          "$MACSO_STATE_PYTHON" remote-desktop/probe_vnc.py
           echo "Apple VNC protocol started; real desktop viewing and input remain to be tested." >> "$GITHUB_STEP_SUMMARY"
       - name: Start authenticated private web desktop
         timeout-minutes: 3
@@ -228,7 +229,7 @@ jobs:
           exit 1
       - name: Publish private browser address
         env:
-          VNC_CONFIGURED: ${{ secrets.MACOS_VNC_PASSWORD != '' }}
+          VNC_CONFIGURED: ${{ secrets.MACOS_VNC_PASSWORD != '' && steps.apple_vnc.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
