@@ -1,5 +1,6 @@
 """Cookie-protected noVNC on the existing private desktop HTTP endpoint."""
 import getpass
+import pwd
 import html
 import mimetypes
 import select
@@ -8,6 +9,13 @@ import time
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 VNC_PORT = 5900
+
+def default_username():
+    try:
+        pwd.getpwnam('desktop')
+        return 'desktop'
+    except KeyError:
+        return getpass.getuser()
 
 HTML = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mac 网页 VNC</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/vnc.css"><header><strong>Mac 网页 VNC</strong><a href="/">原网页桌面</a><span class="spacer"></span><label for="authMode">登录方式</label><select id="authMode"><option value="account">系统账户</option><option value="vnc">VNC 密码</option></select><label for="macUsername">用户名</label><input id="macUsername" value="__DEFAULT_USERNAME__" readonly aria-readonly="true"><label id="passwordLabel" for="vncPassword">系统账户密码</label><input id="vncPassword" type="password" autocomplete="off"><button id="connect">连接</button><button id="disconnect">断开</button><button id="full">全屏</button></header><div id="authHint">用户名已自动填写。请输入这个账户的 macOS 系统密码。</div><div id="info" role="status">正在检查 VNC 服务…</div><div id="view"></div><script type="module" src="/vnc.js"></script></html>'''
 
@@ -123,7 +131,7 @@ def route(handler, path):
         if not handler.session():
             handler.reply(302, b'', headers={'Location':'/'})
             return True
-        handler.reply(200, HTML.replace('__DEFAULT_USERNAME__', html.escape(getpass.getuser(), quote=True)), 'text/html; charset=utf-8')
+        handler.reply(200, HTML.replace('__DEFAULT_USERNAME__', html.escape(default_username(), quote=True)), 'text/html; charset=utf-8')
         return True
     if path not in {'/vnc.js', '/vnc.css', '/api/vnc-status'} and not path.startswith('/vnc-static/'):
         return False
