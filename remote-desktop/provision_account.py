@@ -1,4 +1,4 @@
-"""Recreate the authorized test administrator on a fresh temporary Mac."""
+"""Recreate the authorized ordinary desktop account on a fresh temporary Mac."""
 import getpass
 import os
 import subprocess
@@ -26,18 +26,18 @@ def main():
     if not exists:
         result = run([
             "/usr/sbin/sysadminctl", "-addUser", ACCOUNT,
-            "-fullName", "Project Test Desktop", "-admin", "-password", password,
+            "-fullName", "Project Test Desktop", "-password", password,
         ])
         if result.returncode != 0:
             print("Desktop account creation failed. The password was not logged.", file=sys.stderr)
             return 1
-    # sysadminctl may return zero on failure; verify both authentication and group.
+    # sysadminctl may return zero on failure; verify authentication independently.
     auth = run(["/usr/bin/dscl", ".", "-authonly", ACCOUNT, password])
     membership = run(["/usr/sbin/dseditgroup", "-o", "checkmember", "-m", ACCOUNT, "admin"])
-    if auth.returncode != 0 or membership.returncode != 0 or not membership.stdout.lower().startswith("yes"):
-        print("Desktop account authentication or administrator membership failed.", file=sys.stderr)
+    if auth.returncode != 0 or not membership.stdout.lower().startswith("no"):
+        print("Desktop account authentication or ordinary-account verification failed.", file=sys.stderr)
         return 1
-    print("DESKTOP_ACCOUNT_READY: desktop authentication and administrator membership verified.")
+    print("DESKTOP_ACCOUNT_READY: desktop authentication and ordinary-account status verified.")
     return 0
 
 if __name__ == "__main__":
