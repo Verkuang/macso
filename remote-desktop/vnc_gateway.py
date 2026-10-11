@@ -1,4 +1,6 @@
 """Cookie-protected noVNC on the existing private desktop HTTP endpoint."""
+import getpass
+import html
 import mimetypes
 import select
 import socket
@@ -7,18 +9,106 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 VNC_PORT = 5900
 
-HTML = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mac 网页 VNC</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/vnc.css"><header><strong>Mac 网页 VNC</strong><a href="/">原网页桌面</a><span class="spacer"></span><label for="vncPassword">VNC 密码</label><input id="vncPassword" type="password" autocomplete="off" maxlength="8"><button id="connect">连接</button><button id="disconnect">断开</button><button id="full">全屏</button></header><div id="info" role="status">正在检查 VNC 服务…</div><div id="view"></div><script type="module" src="/vnc.js"></script></html>'''
+HTML = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mac 网页 VNC</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/vnc.css"><header><strong>Mac 网页 VNC</strong><a href="/">原网页桌面</a><span class="spacer"></span><label for="authMode">登录方式</label><select id="authMode"><option value="account">系统账户</option><option value="vnc">VNC 密码</option></select><label for="macUsername">用户名</label><input id="macUsername" value="__DEFAULT_USERNAME__" readonly aria-readonly="true"><label id="passwordLabel" for="vncPassword">系统账户密码</label><input id="vncPassword" type="password" autocomplete="off"><button id="connect">连接</button><button id="disconnect">断开</button><button id="full">全屏</button></header><div id="authHint">用户名已自动填写。请输入这个账户的 macOS 系统密码。</div><div id="info" role="status">正在检查 VNC 服务…</div><div id="view"></div><script type="module" src="/vnc.js"></script></html>'''
 
-CSS = '#view{height:calc(100vh - 130px);background:#05080c}#info{padding:12px;color:#b6c7de}header input{width:160px}'
+CSS = '#view{height:calc(100vh - 175px);background:#05080c}#info,#authHint{padding:8px 12px;color:#b6c7de}header{flex-wrap:wrap}header input{width:160px}#macUsername{width:90px}header select{padding:8px;background:#111d30;color:#fff;border:1px solid #33435d;border-radius:6px}[hidden]{display:none!important}'
 
 JS = '''import RFB from '/vnc-static/core/rfb.js';
-// Pinned noVNC 1.6.0 adapter: this page uses Apple's enabled VNC password mode.
-// Apple lists account authentication first; accept only password authentication (type 2).
-class PasswordRFB extends RFB { _isSupportedSecurityType(type) { return type === 2; } }
-const $=id=>document.getElementById(id);let rfb;
-async function check(){try{const r=await fetch('/api/vnc-status');if(r.status===401){location.href='/';return;}const s=await r.json();$('connect').disabled=!s.available;$('info').textContent=s.available?'VNC 服务已启动。请输入单独配置的 VNC 密码。':'当前 Mac 尚未启动 VNC 服务。原网页桌面仍可使用；需要在启动流程配置 MACOS_VNC_PASSWORD。';}catch(e){$('info').textContent='检查连接失败，请稍后重试';}}
-$('connect').onclick=()=>{rfb?.disconnect();const credentials={password:$('vncPassword').value};$('vncPassword').value='';$('info').textContent='正在连接…';rfb=new PasswordRFB($('view'),`${location.protocol==='https:'?'wss':'ws'}://${location.host}/vnc-socket`,{credentials});rfb.scaleViewport=true;rfb.resizeSession=false;rfb.qualityLevel=4;rfb.compressionLevel=6;rfb.addEventListener('connect',()=>{$('info').textContent='VNC 已连接 · 点击桌面即可操作';});rfb.addEventListener('disconnect',e=>{$('info').textContent=e.detail.clean?'VNC 已断开':'VNC 连接中断，请检查服务和密码';});rfb.addEventListener('credentialsrequired',()=>{$('info').textContent='请重新输入 VNC 密码并连接。';rfb.disconnect();});rfb.addEventListener('securityfailure',()=>{$('info').textContent='VNC 身份验证失败，请检查单独的 VNC 密码';});};
-$('disconnect').onclick=()=>rfb?.disconnect();$('full').onclick=()=>$('view').requestFullscreen();check();'''
+// Pin each connection to the requested authenticated mode; never fall back to no-auth.
+class AuthRFB extends RFB {
+    constructor(target, url, options, mode) {
+        super(target, url, options);
+        this.securityType = mode === 'account' ? 30 : 2;
+    }
+    _isSupportedSecurityType(type) { return type === this.securityType; }
+    _negotiateAuthentication() {
+        if (this._rfbAuthScheme !== this.securityType) {
+            return this._fail('The server did not offer the selected authentication mode.');
+        }
+        return super._negotiateAuthentication();
+    }
+}
+const $ = id => document.getElementById(id);
+let rfb, available = false;
+function updateMode() {
+    const account = $('authMode').value === 'account';
+    $('macUsername').hidden = !account;
+    document.querySelector('label[for="macUsername"]').hidden = !account;
+    $('passwordLabel').textContent = account ? '系统账户密码' : 'VNC 密码';
+    $('vncPassword').value = '';
+    if (account) $('vncPassword').removeAttribute('maxlength');
+    else $('vncPassword').maxLength = 8;
+    $('authHint').textContent = account ?
+        '用户名已自动填写。请输入这个账户的 macOS 系统密码；它可能与 VNC 密码不同。' :
+        '请输入单独配置的 VNC 密码。这种方式不负责登录 macOS 系统账户。';
+}
+async function check() {
+    try {
+        const r = await fetch('/api/vnc-status');
+        if (r.status === 401) { location.href = '/'; return; }
+        if (!r.ok) throw new Error('unavailable');
+        available = (await r.json()).available;
+        $('connect').disabled = !available;
+        $('info').textContent = available ? '服务已就绪，请输入对应密码后连接。' :
+            '当前 Mac 尚未启动 VNC 服务，原网页桌面仍可使用。';
+    } catch (e) {
+        available = false;
+        $('connect').disabled = true;
+        $('info').textContent = '检查连接失败，请稍后刷新重试。';
+    }
+}
+$('authMode').onchange = () => {
+    const old = rfb; rfb = null; old?.disconnect();
+    updateMode();
+    $('info').textContent = available ? '请选择的方式输入密码后连接。' : 'VNC 服务暂不可用。';
+};
+$('connect').onclick = () => {
+    const mode = $('authMode').value, password = $('vncPassword').value;
+    if (!password) { $('info').textContent = '请先输入对应密码。'; return; }
+    if (mode === 'vnc' && password.length > 8) {
+        $('info').textContent = 'VNC 密码最多 8 位；系统密码请使用系统账户方式。'; return;
+    }
+    const credentials = mode === 'account' ?
+        { username: $('macUsername').value, password } : { password };
+    const old = rfb; rfb = null; old?.disconnect();
+    $('vncPassword').value = '';
+    $('info').textContent = '正在连接…';
+    const next = new AuthRFB($('view'),
+        `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/vnc-socket`,
+        { credentials, shared: true }, mode);
+    rfb = next;
+    next.scaleViewport = true;
+    next.resizeSession = false;
+    next.qualityLevel = 4;
+    next.compressionLevel = 6;
+    next.addEventListener('connect', () => {
+        if (rfb === next) $('info').textContent =
+            '连接已建立，请确认下方是否显示已有桌面。';
+    });
+    let failed = false;
+    next.addEventListener('disconnect', e => {
+        if (rfb !== next || failed) return;
+        $('info').textContent = e.detail.clean ? '连接已断开。' : '连接中断，请重试。';
+    });
+    next.addEventListener('credentialsrequired', () => {
+        if (rfb !== next) return;
+        failed = true;
+        $('info').textContent = '服务器要求其他认证信息，请检查当前登录方式。';
+        next.disconnect();
+    });
+    next.addEventListener('securityfailure', () => {
+        if (rfb !== next) return;
+        failed = true;
+        $('info').textContent = mode === 'account' ?
+            '系统账户认证失败，请检查当前账户的系统密码。' :
+            'VNC 密码认证失败，请检查单独配置的 VNC 密码。';
+    });
+};
+$('disconnect').onclick = () => rfb?.disconnect();
+$('full').onclick = () => $('view').requestFullscreen();
+updateMode();
+check();
+'''
 
 def ready():
     try:
@@ -33,7 +123,7 @@ def route(handler, path):
         if not handler.session():
             handler.reply(302, b'', headers={'Location':'/'})
             return True
-        handler.reply(200, HTML, 'text/html; charset=utf-8')
+        handler.reply(200, HTML.replace('__DEFAULT_USERNAME__', html.escape(getpass.getuser(), quote=True)), 'text/html; charset=utf-8')
         return True
     if path not in {'/vnc.js', '/vnc.css', '/api/vnc-status'} and not path.startswith('/vnc-static/'):
         return False
